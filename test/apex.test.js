@@ -172,7 +172,7 @@ test('CLI setup, idempotency and fail-before-write for invalid configurations', 
   assert.equal(result.status, 0, result.stderr);
   const repeated = cli(args, env);
   assert.equal(repeated.status, 0, repeated.stderr);
-  assert.match(repeated.stdout, /already up to date/);
+  assert.match(repeated.stdout, /codex: unchanged/);
   await writeFile(join(env.PI_CODING_AGENT_DIR, 'models.json'), 'invalid');
   await writeFile(join(env.CLAUDE_CONFIG_DIR, 'settings.json'), '{}');
   const failed = cli(args, env);

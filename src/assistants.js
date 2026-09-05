@@ -125,7 +125,7 @@ export async function planAssistant(assistant) {
 
 export function launchOptions(id, env = process.env) {
   const token = env.CALLSTACK_AUTH_TOKEN;
-  if (!token?.trim()) throw new Error('Set CALLSTACK_AUTH_TOKEN in your environment before launching.');
+  if (!token?.trim()) throw new Error('Set CALLSTACK_AUTH_TOKEN in your environment before launching. Run apex auth for Console and shell instructions.');
   const childEnv = { ...env };
   switch (id) {
     case 'opencode': return { args: ['--model', `callstack.ai/${MODEL}`], env: childEnv };

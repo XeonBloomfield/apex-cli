@@ -17,12 +17,14 @@ node bin/apex.js init --dry-run
 node bin/apex.js init
 ```
 
-`init` lists detected assistants and planned file changes, then asks for confirmation.
+`init` lets you select detected assistants, lists planned changes, and asks for confirmation.
 Use `--assistants codex,claude,opencode,pi` to select tools explicitly (including
 tools not yet detected). Use `--yes` for noninteractive setup. Detection checks
-PATH, configuration directories, and common macOS editor application locations;
-it does not run discovered executables or recursively scan your machine. A
-configuration directory may remain after a tool has been uninstalled.
+PATH, configuration directories, and common macOS editor application locations.
+`detect` never runs discovered tools. `init` and `doctor` probe selected executables
+with `--version` (three-second timeout), except during a dry run. A configuration
+directory may remain after a tool has been uninstalled. Unknown versions are
+reported as unverified, and unsupported versions require manual action.
 
 ## npm usage (after publication)
 
@@ -31,6 +33,49 @@ npx @callstack/apex init
 npx @callstack/apex init --assistants codex,pi --dry-run
 npx @callstack/apex init --assistants codex,pi --yes
 ```
+
+Without explicit selection, `--yes` uses all detected assistants. If a configuration
+is invalid, no writes happen by default. Interactive setup can skip that assistant;
+automation must explicitly use `--skip-invalid` to continue with valid tools. Partial
+setup exits with status 1 and reports each applied, skipped, or failed result.
+
+## Get a key and check setup
+
+```sh
+npx @callstack/apex auth
+npx @callstack/apex auth --open
+npx @callstack/apex doctor --assistants codex
+```
+
+`auth` prints shell-specific credential instructions and the Developer Console
+setup URL. `--open` opens that page; it does not create a key or read browser cookies.
+Reuse a saved key or create one in the Console. `APEX_CONSOLE_URL` overrides the
+default `https://platform.callstack.ai` origin (HTTPS required except on localhost).
+The Console needs the `/setup` route for this handoff.
+
+`doctor` checks selected tools, global configuration, and the presence of
+`CALLSTACK_AUTH_TOKEN` without contacting the gateway. It does not alter files.
+Manual editors, missing tools, unknown versions, or incomplete credentials/config
+return status 1. Local checks passing is not a verified API connection.
+
+An optional live check sends only a short fixed prompt, never project content:
+
+```sh
+npx @callstack/apex doctor --assistants codex --live --transport responses
+npx @callstack/apex doctor --assistants claude --live --transport anthropic
+npx @callstack/apex doctor --assistants pi --live --transport chat-completions
+```
+
+Live checks may consume credit and ask for confirmation; automation requires
+`--live --yes`. The transport defaults to Chat Completions. Redirects are refused,
+requests time out after 15 seconds, and response content is not logged. A valid
+text completion verifies only the selected transport, not all assistant features.
+Failures report authentication, credit/access, model/endpoint, limit, network,
+gateway, or invalid-response categories without guessing when the cause is unclear.
+
+Configuration-only `init` exits 0 when its selected file operations succeed; it
+does not claim credentials or gateway access are ready. Manual editor setup is
+always reported as manual, not verified or up to date.
 
 Provide `CALLSTACK_AUTH_TOKEN` through your shell or secret manager. The installer
 does not prompt for, log, store, or validate API keys. For example, a hidden prompt
@@ -45,10 +90,10 @@ npx @callstack/apex run codex
 For local development, substitute `node bin/apex.js run codex`. Other launchers:
 
 ```sh
-apex run opencode
-apex run claude
-apex run pi
-apex run codex -- --help
+npx @callstack/apex run opencode
+npx @callstack/apex run claude
+npx @callstack/apex run pi
+npx @callstack/apex run codex -- --help
 ```
 
 Launchers pass additional arguments unchanged (without a shell). Explicit user
@@ -57,6 +102,13 @@ arguments can override the selected model. They do not run `init` automatically.
 only in the child process, without changing your default Claude provider. Other
 launchers select the registered model/profile. Keep the environment variable set
 when launching these assistants directly too.
+
+A new terminal does not inherit a token exported in a different terminal. Repeat
+the hidden prompt or use your secret manager to inject `CALLSTACK_AUTH_TOKEN` into
+each session. The `auth` command supplies zsh, Bash, or PowerShell instructions;
+its generic Bash command starts a credential-scoped Bash shell. Nothing is saved
+to a keychain or plaintext credentials file. To remove an environment-only key,
+close that shell or unset the variable. After rotation, replace it in every client.
 
 ## Integrations
 
@@ -87,6 +139,8 @@ are not included.
 - Dry runs print paths, never configuration contents or credentials, and do not write.
 - All selected configurations are parsed before any write. Malformed files,
   conflicting Codex profile keys and symlinked files/directories are refused.
+  With an explicit skip decision, valid assistants can proceed without changing
+  the refused files. A later I/O failure can still leave earlier changes applied.
 - JSON/JSONC edits preserve comments and unrelated keys. Existing Callstack
   endpoint/auth fields are replaced with the documented endpoint and environment
   references. Existing auth files are left untouched; a stored credential may
@@ -101,8 +155,9 @@ are not included.
 - To undo, close the assistant and restore the printed backup path over its
   corresponding config after reviewing intervening changes. For newly created
   files, remove only those files after checking they contain no later additions.
-- The CLI makes no API requests and does not verify credentials or gateway access.
-  Test your connection by launching a configured assistant.
+- Only an explicitly approved `doctor --live` check makes an API request. Dry runs
+  never execute version probes, open a browser, or make network requests. Launching
+  an assistant hands control to that tool, which can make its own requests.
 
 ## Shell installation
 
