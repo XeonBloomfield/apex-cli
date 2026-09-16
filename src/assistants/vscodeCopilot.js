@@ -24,8 +24,8 @@ function apply({ log }) {
   log('     [{');
   log('       "id": "callstack/Apex", "name": "Apex", "url": "https://api.callstack.ai/v1",');
   log('       "toolCalling": true, "vision": true, "thinking": true,');
-  log('       "maxInputTokens": 240000, "maxOutputTokens": 16384,');
-  log('       "supportsReasoningEffort": ["low", "medium"], "reasoningEffortFormat": "chat-completions"');
+  log('       "contextWindow": 262144, "maxOutputTokens": 16384,');
+  log('       "supportsReasoningEffort": ["none", "low", "medium", "xhigh"], "reasoningEffortFormat": "chat-completions"');
   log('     }]');
 
   return { configured: false, manual: true };
