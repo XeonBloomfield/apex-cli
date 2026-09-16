@@ -1,7 +1,7 @@
 # Apex CLI
 
 Configures the AI coding assistants installed on your machine to use
-[Callstack Apex](https://api.callstack.ai) — an OpenAI-compatible endpoint
+[Callstack Apex](https://apex.callstack.com/) — an OpenAI-compatible endpoint
 serving the `callstack/Apex` model.
 
 ## Install
@@ -56,12 +56,6 @@ apex list      # show which assistants are detected, without changing anything
 Your Apex API key is written locally to config files under your home
 directory (and, for JS projects, to a local `.env`). Never commit these
 files or share the key. Rotate it if you suspect it leaked.
-
-## Troubleshooting
-
-See the internal "Apex - how to use it?" Notion page, or ask in `#apex` on
-Slack. Known issue: some `pi` users have hit Cloudflare 403s — this has come
-up more than once and is being tracked there.
 
 ## Local development
 
