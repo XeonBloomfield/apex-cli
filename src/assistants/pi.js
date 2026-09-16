@@ -20,7 +20,23 @@ function apply({ apiKey, dryRun, log }) {
     baseUrl: 'https://api.callstack.ai/v1',
     api: 'openai-completions',
     apiKey: apiKey || 'XXX',
-    models: [{ id: 'callstack/Apex' }],
+    models: [
+      {
+        id: 'callstack/Apex',
+        reasoning: true,
+        input: ['text', 'image'],
+        thinkingLevelMap: {
+          off: 'none',
+          minimal: null,
+          low: 'low',
+          medium: 'medium',
+          high: null,
+          xhigh: 'xhigh',
+          max: null,
+        },
+        contextWindow: 262144,
+      },
+    ],
   };
 
   if (!dryRun) {

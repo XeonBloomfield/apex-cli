@@ -34,7 +34,14 @@ function apply({ dryRun, log }) {
   }
   log(`wrote ${configPath}`);
 
-  const profileContents = 'model_provider = "callstack_ai"\nmodel          = "callstack/Apex"\n';
+  const profileContents = [
+    'model_provider = "callstack_ai"',
+    'model          = "callstack/Apex"',
+    'model_context_window    = 262144',
+    'model_max_output_tokens = 16384',
+    'model_reasoning_effort  = "medium"',
+    '',
+  ].join('\n');
   if (!dryRun) {
     backupFile(profilePath);
     writeFileEnsuringDir(profilePath, profileContents);

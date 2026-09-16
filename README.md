@@ -27,7 +27,7 @@ to point at Apex, backing up any existing file first (`<file>.bak-<timestamp>`):
 | --- | --- |
 | Claude Code | `~/.claude/settings.json` |
 | Codex | `~/.codex/config.toml`, `~/.codex/callstack_ai.config.toml` |
-| OpenCode | `~/.config/opencode/opencode.json`, `~/.local/share/opencode/auth.json` (if absent) |
+| OpenCode | `~/.config/opencode/opencode.json` (v1 or v2 format, auto-detected), `~/.local/share/opencode/auth.json` (if absent, v1 only) |
 | pi | `~/.pi/agent/models.json` |
 | Cursor | manual steps (GUI-only, printed to the terminal) |
 | VS Code + GitHub Copilot | manual steps (GUI-only, printed to the terminal) |

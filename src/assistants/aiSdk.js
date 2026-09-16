@@ -42,6 +42,7 @@ function apply({ cwd, apiKey, dryRun, log }) {
   log("  import { createOpenAI } from '@ai-sdk/openai';");
   log('  const apex = createOpenAI({ apiKey: process.env.APEX_API_KEY, baseURL: "https://api.callstack.ai/v1", name: "callstack" });');
   log('  // use apex(\'callstack/Apex\') with generateText / streamText');
+  log('  // reasoning effort (none/low/medium/xhigh): pass providerOptions: { callstack: { reasoningEffort: "medium" } }');
 
   if (deps['eve']) {
     log('Eve note: set modelContextWindowTokens: 262_144 on defineAgent, or compaction will fail to compile.');

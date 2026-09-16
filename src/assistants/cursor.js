@@ -22,6 +22,7 @@ function apply({ log }) {
   log('  3. Paste your Apex API key, and set "Override OpenAI Base URL" to https://api.callstack.ai/v1');
   log('  4. In Models, "Add Custom Model" -> enter callstack/Apex -> enable it');
   log('  5. Cmd+L -> pick "Apex" from the model dropdown');
+  log('Note: Cursor has no way to declare model capabilities (tool calling, vision, reasoning) for a custom model — it infers them, so the steps above are all there is to configure.');
 
   return { configured: false, manual: true };
 }

@@ -21,7 +21,12 @@ function apply({ log }) {
   log('  2. "Add Models" -> "Custom Endpoint"');
   log('  3. Name it "callstack.ai", paste your Apex API key, choose "Chat Completions"');
   log('  4. In the JSON editor that opens, set the "models" array to:');
-  log('     [{ "id": "callstack/Apex", "name": "Apex", "url": "https://api.callstack.ai/v1", "toolCalling": true, "vision": true }]');
+  log('     [{');
+  log('       "id": "callstack/Apex", "name": "Apex", "url": "https://api.callstack.ai/v1",');
+  log('       "toolCalling": true, "vision": true, "thinking": true,');
+  log('       "maxInputTokens": 240000, "maxOutputTokens": 16384,');
+  log('       "supportsReasoningEffort": ["low", "medium"], "reasoningEffortFormat": "chat-completions"');
+  log('     }]');
 
   return { configured: false, manual: true };
 }
