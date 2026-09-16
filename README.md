@@ -1,18 +1,9 @@
 # Apex CLI
 
 Configures the AI coding assistants installed on your machine to use
-[Callstack Apex](https://apex.callstack.com/) — an OpenAI-compatible endpoint
-serving the `callstack/Apex` model.
+[Callstack Apex](https://apex.callstack.com/).
 
 ## Install
-
-```sh
-curl -fsSL https://apex.callstack.ai/install.sh | sh
-```
-
-This checks for Node.js 18+ and then runs `npx @callstack/apex init` for you.
-
-If you already have Node.js, you can skip the script entirely:
 
 ```sh
 npx @callstack/apex init
@@ -56,10 +47,3 @@ apex list      # show which assistants are detected, without changing anything
 Your Apex API key is written locally to config files under your home
 directory (and, for JS projects, to a local `.env`). Never commit these
 files or share the key. Rotate it if you suspect it leaked.
-
-## Local development
-
-```sh
-npm link
-apex --help
-```
