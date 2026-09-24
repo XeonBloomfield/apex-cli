@@ -2,61 +2,161 @@
 
 A CLI for configuring coding assistants to use `callstack/Apex`.
 
-The package has not been published to npm yet. Use the local commands below
-until the first release. `init` configures existing tools; it does not install
-assistants or models.
+`apex init` detects the assistants on your machine, lets you pick which ones to configure,
+shows every change it wants to make, and only then writes. Nothing changes until you say so.
 
-## Try locally
+## Try it locally
 
 Requires Node.js 22+ and npm.
 
 ```sh
 npm ci
-node bin/apex.js detect
-node bin/apex.js init --dry-run
-node bin/apex.js init
+npm link        # puts `apex` on your PATH, pointing at this checkout
+apex --help
+apex detect
+apex init --dry-run
+apex init       # interactive: pick assistants, review, confirm
+apex undo --dry-run
 ```
 
-`init` lists detected assistants and planned file changes, then asks for confirmation.
-Use `--assistants codex,claude,opencode,pi` to select tools explicitly (including
-tools not yet detected). Use `--yes` for noninteractive setup. Detection checks
-PATH, configuration directories, and common macOS editor application locations;
-it does not run discovered executables or recursively scan your machine. A
-configuration directory may remain after a tool has been uninstalled.
+`npm link` is the standard npm mechanism: `package.json` declares
+`"bin": { "apex": "bin/apex.js" }`, so npm symlinks the command into your Node `bin`
+directory (no sudo with nvm, no shell aliases, no `PATH` edits). Remove it with
+`npm rm -g @callstack/apex`. Until the package is published, `npm link` is how you get the
+bare `apex` command; from a checkout you can also always run `node bin/apex.js …`, and once
+published a plain `npm install -g @callstack/apex` (or `scripts/install.sh`) does the same
+thing from the registry: the published tarball already contains `dist/cli.js`, so no build
+step or install scripts are needed on your machine.
 
-## npm usage (after publication)
+## Commands
+
+| Command | What it does | Writes by default? |
+| --- | --- | --- |
+| `apex detect [--json]` | Finds assistants on `PATH`, in config directories and in macOS `/Applications`; shows what would change | No, never |
+| `apex init` | Interactive setup: multiselect of detected assistants, colourised change preview, confirmation | Only after you confirm |
+| `apex init --dry-run` | Same preview, no prompts | No |
+| `apex init --no-interactive` | No prompts; equivalent to `--dry-run` | No |
+| `apex init --apply` | Writes the planned changes without prompting (`--yes`/`-y` are aliases) | Yes |
+| `apex undo` | Reverts the most recent Apex CLI setup, with the same preview and confirmation | Only after you confirm |
+| `apex undo --list` | Shows recorded setups and which are already undone | No |
+| `apex run <assistant> [-- <args>]` | Launches the assistant with the gateway, model and credentials in the child environment | No |
+| `apex completion <zsh\|bash\|fish>` | Prints a shell completion script generated from the live command and flag tables | No |
+
+One table in `src/cli.js` defines every command and the flags it accepts, and `--help`, flag
+parsing and the completion scripts are all generated from it, so none of the three can promise a
+flag the others reject:
+
+| Command | Flags |
+| --- | --- |
+| `init` | `--assistants <ids>`, `--dry-run`, `--no-interactive`, `--apply`, `--no-diff`, `--json`, `--yes`/`-y`, `--help` |
+| `detect` | `--json`, `--help` |
+| `undo` | `--dry-run`, `--no-interactive`, `--apply`, `--no-diff`, `--json`, `--list`, `--yes`/`-y`, `--help` |
+
+`--dry-run --apply` is rejected, `apex init --wat` fails fast, and so does a flag in the wrong
+command (`apex detect --no-diff`). `--assistants <ids>` is a comma list of `opencode`, `codex`,
+`claude`, `pi`, `cursor`, `copilot`.
+
+Non-interactive callers (`--no-interactive`, `--json`, pipes, CI) never get a prompt and never
+have files changed unless they also pass `--apply`. `--json` prints a machine-readable plan with
+`mode`, `applied`, `appliedPaths`, per-file `changes` and `nextSteps` instead of the human UI. If a
+write fails halfway through a batch, the payload still reports what already landed plus the `error`,
+and the exit code is 1.
+
+### Shell completion
 
 ```sh
-npx @callstack/apex init
-npx @callstack/apex init --assistants codex,pi --dry-run
-npx @callstack/apex init --assistants codex,pi --yes
+apex completion zsh  > "${fpath[1]}/_apex"                          # then rehash
+apex completion bash >> ~/.bashrc                                   # then source ~/.bashrc
+apex completion fish > ~/.config/fish/completions/apex.fish
 ```
 
-Provide `CALLSTACK_AUTH_TOKEN` through your shell or secret manager. The installer
-does not prompt for, log, store, or validate API keys. For example, a hidden prompt
-in Bash avoids placing the value directly in shell history:
+## What a review looks like
 
-```bash
-read -r -s -p 'Callstack API key: ' CALLSTACK_AUTH_TOKEN; echo
-export CALLSTACK_AUTH_TOKEN
-npx @callstack/apex run codex
 ```
+ ┌────────────────────────────────────────────────────────────────────────────┐
+ │ Apex CLI · Configure callstack/Apex for your favorite harness              │
+ │                                                                            │
+ │ Nothing is written until you confirm.                                      │
+ └────────────────────────────────────────────────────────────────────────────┘
+│
+◆  Set up callstack/Apex for which assistants?  (space toggles, enter confirms)
+│  OpenCode, Codex
+│
+◇  Set up callstack/Apex for which assistants?  (space toggles, enter confirms)
+│  OpenCode, Codex
 
-For local development, substitute `node bin/apex.js run codex`. Other launchers:
 
-```sh
-apex run opencode
-apex run claude
-apex run pi
-apex run codex -- --help
+   Planned changes:
+
+   Update     ~/.config/opencode/opencode.json
+   --- ~/.config/opencode/opencode.json
+   +++ ~/.config/opencode/opencode.json
+   @@ -1,4 +1,19 @@
+    {
+      // keep this comment
+   -  "theme": "dark"
+   +  "theme": "dark",
+   +  "provider": {
+   +    "callstack.ai": { … }
+   +  }
+    }
+
+   Create     ~/.codex/callstack_ai.config.toml
+   --- /dev/null
+   +++ ~/.codex/callstack_ai.config.toml
+   @@ -0,0 +1,10 @@
+   +model_provider = "callstack_ai"
+
+   Existing files get a .apex-backup-<id> copy first.        (dimmed)
+│
+◇  Apply these changes?
+   ✔ ~/.config/opencode/opencode.json backup: opencode.json.apex-backup-b4c42657
+
+
+   Environment
+
+   ✓ CALLSTACK_AUTH_TOKEN is set in this shell
+   Apex CLI never reads, stores or logs the key itself.
+
+
+   Use these commands to run callstack/Apex with your selected harnesses:
+
+   apex run opencode  opencode --model callstack.ai/callstack/Apex        (dimmed)
+   apex run codex     codex --profile callstack_ai
+
+   ...or pick "callstack/Apex" from the UI when setting up manually.
+   For more instructions, visit:
+   https://app.notion.com/p/callstack/Apex-how-to-use-it-36d5d027c0f880e99d03d1c37a77382f
+
+   If you want to undo the changes, run apex undo
 ```
+Every Apex line sits in the same 3-space gutter the prompt library uses for its own text (`◇  …`,
+`│  …`), so the picker, the plan and the diff below it read as one column; the header box sits just
+outside that gutter, so its text lines up too. Blocks are separated by blank lines that headings own,
+so nothing can slide out of alignment when a terminal wraps a line, and wrapped text stays inside the
+gutter because widths are measured on the text without its colour codes. Columns inside a line are
+sized from their longest value plus a gap, so labels never touch the text beside them. Added lines are green,
+removals red, hunk markers magenta, the `callstack/Apex` model id is always green, and environment
+references such as `{env:CALLSTACK_AUTH_TOKEN}` are highlighted instead of printed as secrets.
 
-Launchers pass additional arguments unchanged (without a shell). Explicit user
-arguments can override the selected model. They do not run `init` automatically.
-`apex run claude` sets the gateway URL, token, attribution flag and model aliases
-only in the child process, without changing your default Claude provider. Other
-launchers select the registered model/profile. Keep the environment variable set
-when launching these assistants directly too.
+`Environment` only shows the `export CALLSTACK_AUTH_TOKEN=…` line while the variable is missing; once
+it is set you get a green `✓ CALLSTACK_AUTH_TOKEN is set in this shell` instead. The closing block shows
+what each `apex run` expands to, links the guide (the URL is never folded, so it stays clickable), and
+mentions `apex undo` only when something was actually written.
+
+The diff is the change list: it only shows the lines that actually move, paths are shortened to
+`~/…`, and values under keys like `apiKey`, `token` or `secret` are redacted, so a preview can be
+pasted into a ticket safely. A file Apex CLI created diffs from `/dev/null`, and one it is deleting
+diffs to `/dev/null`. `--no-diff` swaps the diff for one `+ key  value` row per setting.
+
+## Reversing changes
+
+`apex undo` re-applies the inverse of the last setup, named by the time it ran: files Apex CLI
+created are deleted, files it edited go back to their pre-setup bytes. It only touches a file whose current content still hashes
+to what Apex CLI wrote; anything you edited afterwards is left alone and reported. Restores create
+their own backup first, so an undo is itself reversible. Apex CLI records each batch in
+`$APEX_STATE_DIR/journal.json` (default `~/.local/state/apex/journal.json`, mode `0600`); the last
+20 batches are kept. Deleting the journal only forgets the history, it never changes a config.
 
 ## Integrations
 
@@ -69,74 +169,91 @@ when launching these assistants directly too.
 | Cursor | Guided setup | Prints endpoint, API-key and custom-model steps; does not modify private editor storage. |
 | VS Code / Copilot | Guided setup | Detects VS Code, not whether Copilot is installed; prints custom-endpoint steps and model JSON, retaining the editor-generated secret reference. |
 
-Respects `XDG_CONFIG_HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`,
-`PI_CODING_AGENT_DIR`, and Windows `APPDATA`. Project-specific settings and custom
-`OPENCODE_CONFIG` files are not modified and may override global configuration.
-OpenCode's v2 `providers` format is not supported; this adapter uses the v1
-`provider` format. Older Codex releases using inline
-`[profiles]` need a manual migration or a newer Codex release.
+Respects `XDG_CONFIG_HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`,
+`XDG_STATE_HOME`/`APEX_STATE_DIR`, and Windows `APPDATA`. Project-specific settings and custom
+`OPENCODE_CONFIG` files are not modified and may override global configuration. OpenCode's v2
+`providers` format is not supported; this adapter uses the v1 `provider` format. Older Codex
+releases using inline `[profiles]` need a manual migration or a newer Codex release.
 
-Windows: use npm/npx for setup. File configuration supports Windows paths, but
-`apex run` refuses `.cmd`/`.bat` shims to avoid shell interpolation;
-launch the configured assistant directly or use WSL. The shell installer targets
-macOS, Linux and WSL. Native Windows installer and standalone Node-free binaries
-are not included.
+Windows: use npm/npx for setup. File configuration supports Windows paths, but `apex run` refuses
+`.cmd`/`.bat` shims to avoid shell interpolation; launch the configured assistant directly or use
+WSL. The shell installer targets macOS, Linux and WSL.
+
+## Authentication
+
+Provide `CALLSTACK_AUTH_TOKEN` through your shell or a secret manager. Apex CLI never prompts for,
+logs, stores or validates the key, and never writes it to a config file; configs only reference it.
+A hidden prompt keeps it out of your shell history:
+
+```bash
+read -r -s -p 'Callstack API key: ' CALLSTACK_AUTH_TOKEN; echo
+export CALLSTACK_AUTH_TOKEN
+apex run codex
+```
+
+Other launchers: `apex run opencode`, `apex run claude`, `apex run pi`, `apex run codex -- --help`.
+Launchers pass extra arguments through unchanged (without a shell), can be overridden by explicit
+user arguments, and never run `init`. `apex run claude` sets the gateway URL, token, attribution
+flag and model aliases in the child process only, leaving your default Claude provider alone.
 
 ## Safety and recovery
 
-- Dry runs print paths, never configuration contents or credentials, and do not write.
-- All selected configurations are parsed before any write. Malformed files,
-  conflicting Codex profile keys and symlinked files/directories are refused.
-- JSON/JSONC edits preserve comments and unrelated keys. Existing Callstack
-  endpoint/auth fields are replaced with the documented endpoint and environment
-  references. Existing auth files are left untouched; a stored credential may
-  need removal through the assistant's own auth UI if it takes precedence.
-- Existing files get unique sibling `.apex-backup-<uuid>` backups. Backups and
-  new/replaced files use mode `0600`, and newly created directories use `0700`
-  (POSIX; Windows ACLs remain OS-managed). Backups may contain previous secrets.
-- Writes use same-directory temporary files plus rename; concurrent modifications
-  detected between planning and saving abort the operation. This is not a lock or
-  a multi-file transaction: a later I/O failure can leave earlier writes applied.
-  The CLI prints each successful save and backup. No shell startup file is edited.
-- To undo, close the assistant and restore the printed backup path over its
-  corresponding config after reviewing intervening changes. For newly created
-  files, remove only those files after checking they contain no later additions.
-- The CLI makes no API requests and does not verify credentials or gateway access.
-  Test your connection by launching a configured assistant.
+- Previews print paths and key/value changes, never secrets; dry runs never write.
+- All selected configurations are parsed before any write. Malformed files, conflicting Codex
+  profile keys and symlinked files or directories are refused, and one bad assistant blocks the
+  whole batch instead of half-applying it.
+- JSON/JSONC edits preserve comments and unrelated keys. Existing Callstack endpoint and auth
+  fields are replaced with the documented endpoint and environment references; existing auth files
+  are left untouched, so a stored credential may still win and needs removal in the assistant's
+  own auth UI.
+- Writes use same-directory temporary files plus rename with mode `0600` (new directories `0700`),
+  and abort if the file changed on disk between planning and saving. This is not a lock or a
+  multi-file transaction: a later I/O failure can leave earlier writes applied. `apex undo`
+  cleans that up.
+- Backups and newly created files are printed with every save. To recover by hand, close the
+  assistant and restore the printed `*.apex-backup-<id>` file over its config after reviewing any
+  intervening edits. Backups can contain previous secrets.
+- No shell startup file is ever edited. The CLI makes no API requests and cannot verify your
+  key or gateway access; launch a configured assistant to test the connection.
 
 ## Shell installation
 
-The bootstrapper installs the npm package to `~/.local` without sudo. It does not
-download Node.js or alter shell profiles. Set `APEX_INSTALL_PREFIX` to an absolute
-path and/or `APEX_VERSION` to a published version to override the defaults.
+The bootstrapper installs the npm package to `~/.local` without sudo, without downloading Node.js
+and without touching shell profiles. Set `APEX_INSTALL_PREFIX` and/or `APEX_VERSION` to override.
 
 ```sh
 sh scripts/install.sh
-sh scripts/install.sh --assistants codex,pi
+sh scripts/install.sh --assistants codex,pi --dry-run
+sh scripts/install.sh --assistants codex,pi --apply
 ```
 
-The first command only installs and prints the next command. Passing init options
-also runs setup; when piped, it reconnects prompts to `/dev/tty` if available.
-For automation pass `--yes`.
+The first command only installs and prints the next one. Passing init options also runs setup; when
+piped, prompts reconnect to `/dev/tty` if available. Upgrade by rerunning with a newer
+`APEX_VERSION`; uninstall with
+`npm uninstall --global --prefix "$HOME/.local" @callstack/apex`. Uninstalling the CLI does not
+undo assistant configuration: run `apex undo` first.
 
-Upgrade by rerunning the installer
-with a newer `APEX_VERSION`; uninstall the npm CLI with
-`npm uninstall --global --prefix "$HOME/.local" @callstack/apex` (or your chosen
-prefix). Uninstalling does not undo assistant configuration.
-
-## Development and release
+## Development
 
 ```sh
-npm test
-npm run check
+npm test          # builds dist, then runs node:test against a throwaway HOME
+npm run check     # syntax checks, installer syntax, build
 npm pack --dry-run
 ```
 
-Tests use temporary home directories and fake credentials without changing your
-assistant settings. Before releasing, test each supported tool against a real
-account and verify version compatibility.
+`src/` is deliberately small and each module owns one concept: `assistants.js` detection and the
+per-tool adapters, `config.js` safe reads and JSONC/TOML edits, `diff.js` value and text diffs,
+`secrets.js` the redaction rules, `journal.js` the undo journal, `plan.js` plan modelling and the
+write flow, `ui.js` presentation, `paths.js` and `tty.js` the two environment probes, and `cli.js`
+the command surface.
 
-Maintainers with publish access to `@callstack` can release a new version with:
+Tests create a temporary `HOME`, fake credentials and a temporary state directory, so they never
+touch your assistants' settings. One test asserts the published bundle imports nothing but `node:*`,
+which is the point of bundling: `tsdown` inlines `@clack/prompts`, `jsonc-parser` and `smol-toml`
+into a single `dist/cli.js` and the package ships with no runtime dependencies. Before releasing,
+test each supported tool against a real account and verify version compatibility.
+
+Maintainers with publish access to `@callstack` can release with:
 
 ```sh
 npm publish --access public

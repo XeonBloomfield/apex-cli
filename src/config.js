@@ -1,6 +1,6 @@
 import { lstat, readFile, mkdir, open, rename, unlink } from 'node:fs/promises';
 import { dirname, resolve, parse as parsePath, join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { parse, modify, applyEdits } from 'jsonc-parser';
 import { parse as parseToml, stringify } from 'smol-toml';
@@ -70,9 +70,26 @@ export function addToml(text, desired, path) {
   if (!Object.keys(missing).length) return text ?? '';
   const scalars = Object.fromEntries(Object.entries(missing).filter(([, value]) => !object(value)));
   const tables = Object.fromEntries(Object.entries(missing).filter(([, value]) => object(value)));
-  const next = `${stringify(scalars)}\n${text ?? ''}\n${stringify(tables)}`;
+  // Scalars must precede any existing table, but never rewrite what is already there:
+  // joining trimmed blocks keeps the diff to the lines that were actually appended.
+  const parts = [];
+  if (Object.keys(scalars).length) parts.push(stringify(scalars));
+  if ((text ?? '').trim()) parts.push(text);
+  if (Object.keys(tables).length) parts.push(stringify(tables));
+  const next = `${parts.map(part => part.replace(/\s+$/, '')).join('\n\n')}\n`;
   parseToml(next);
   return next;
+}
+
+export function sha256(text) {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+export async function removeChange(change) {
+  const { path, before } = change;
+  await assertSafePath(path);
+  if (await readConfig(path) !== before) throw new Error(`Configuration changed while planning: ${path}. Run undo again.`);
+  await unlink(path);
 }
 
 export async function writeChange(change) {
@@ -81,7 +98,7 @@ export async function writeChange(change) {
   await assertSafePath(path);
   if (await readConfig(path) !== before) throw new Error(`Configuration changed while planning: ${path}. Run init again.`);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const suffix = randomUUID();
+  const suffix = randomUUID().slice(0, 8);
   const backup = before === null ? null : `${path}.apex-backup-${suffix}`;
   if (backup) {
     const handle = await open(backup, 'wx', 0o600);

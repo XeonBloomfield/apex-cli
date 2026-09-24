@@ -1,0 +1,555 @@
+#!/usr/bin/env node
+import { parseArgs, styleText } from 'node:util';
+import { spawn } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import { basename } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { BASE_URL, GUIDE_URL, IDS, MANUAL, MANUAL_IDS, MODEL, NAMES, RUNNABLE, detect, executable, launchOptions, planAssistant, runExpansion } from './assistants.js';
+import { removeChange, writeChange } from './config.js';
+import { MODE_NOTE, describeFile, resolveMode, runWrites } from './plan.js';
+import { appendEntry, journalPath, markUndone, newEntryFields, planUndo, readJournal } from './journal.js';
+import { maskChanges } from './secrets.js';
+import { shortPath } from './paths.js';
+import { interactive } from './tty.js';
+import * as ui from './ui.js';
+
+// One table for the whole command surface: flag parsing, --help and the completion scripts are
+// all generated from it, so none of the three can promise a flag the others reject.
+const FLAGS = {
+  assistants: { type: 'string', usage: '--assistants <ids>', hint: 'assistant ids',
+    text: `comma list of: ${IDS.join(', ')} (skips the picker)` },
+  'dry-run': { type: 'boolean', usage: '--dry-run', hint: 'show the plan, write nothing',
+    text: 'show exactly what would change; never touches files' },
+  'no-interactive': { type: 'boolean', usage: '--no-interactive', hint: 'never prompt',
+    text: 'no prompts; behaves like --dry-run unless --apply is also given' },
+  apply: { type: 'boolean', usage: '--apply', hint: 'write without prompting',
+    text: 'write changes without prompting (scripts and CI)' },
+  'no-diff': { type: 'boolean', usage: '--no-diff', hint: 'list settings instead of the file diff',
+    text: 'hide the raw file diff (it is shown by default, secrets redacted)' },
+  json: { type: 'boolean', usage: '--json', hint: 'machine-readable output',
+    text: 'print machine-readable output instead of the human UI' },
+  list: { type: 'boolean', usage: '--list', hint: 'list recorded setups',
+    text: 'show recorded setups instead of reverting one' },
+  yes: { type: 'boolean', short: 'y', usage: '--yes, -y', hint: 'alias for --apply',
+    text: 'alias for --apply, kept for older scripts' },
+  help: { type: 'boolean', short: 'h', usage: '--help, -h', hint: 'show help',
+    text: 'show all commands' },
+};
+
+const COMMANDS = {
+  init: { args: '[--assistants <ids>] [options]', summary: 'configure assistants',
+    flags: ['assistants', 'dry-run', 'no-interactive', 'apply', 'no-diff', 'json', 'yes', 'help'] },
+  detect: { args: '[--json]', summary: 'show what Apex CLI can see on this machine',
+    flags: ['json', 'help'] },
+  undo: { args: '[--list] [options]', summary: 'reverse the most recent Apex CLI setup',
+    flags: ['dry-run', 'no-interactive', 'apply', 'no-diff', 'json', 'list', 'yes', 'help'] },
+  run: { args: `<${RUNNABLE.join('|')}> [-- <args>]`, summary: 'launch an assistant with the gateway set',
+    flags: [] },
+  completion: { args: '<zsh|bash|fish>', summary: 'print a shell completion script', flags: [] },
+  help: { args: '', summary: 'show all commands', flags: [] },
+};
+
+const SHELLS = ['zsh', 'bash', 'fish'];
+const OPTIONS = Object.fromEntries(Object.entries(FLAGS).map(([name, flag]) =>
+  [name, { type: flag.type, ...(flag.short ? { short: flag.short } : {}) }]));
+const flagsOf = command => COMMANDS[command].flags;
+const commandsFor = flag => Object.keys(COMMANDS).filter(name => COMMANDS[name].flags.includes(flag));
+
+const usageRows = Object.entries(COMMANDS).map(([name, command]) =>
+  [`apex ${name}${command.args ? ` ${command.args}` : ''}`, command.summary]);
+// The no-flag default is an option row like any other, so it cannot drift out of the table either.
+const optionRows = [[`(no flags)`, '(init, undo)',
+  'interactive: pick assistants, review every change and diff, then confirm'],
+  ...Object.entries(FLAGS).map(([name, flag]) => [flag.usage, `(${commandsFor(name).join(', ')})`, flag.text])];
+const installRows = [
+  ['zsh', 'apex completion zsh  > "${fpath[1]}/_apex"', 'rehash or restart the shell'],
+  ['bash', 'apex completion bash >> ~/.bashrc', 'source ~/.bashrc'],
+  ['fish', 'apex completion fish > ~/.config/fish/completions/apex.fish', ''],
+];
+const usageWidth = ui.columnWidth(usageRows.map(([usage]) => usage));
+const optionWidth = ui.columnWidth(optionRows.map(([usage]) => usage));
+const scopeWidth = ui.columnWidth(optionRows.map(([, scope]) => scope));
+const installWidth = ui.columnWidth(installRows.map(([, command]) => command));
+
+const HELP = `Apex CLI: point your coding assistants at ${MODEL}
+
+Usage
+${usageRows.map(([usage, summary]) => `  ${ui.pad(usage, usageWidth)}${summary}`).join('\n')}
+
+Install completions
+${installRows.map(([shell, command, note]) => `  ${ui.pad(shell, 6)}${note ? ui.pad(command, installWidth) + ui.dim(`(then: ${note})`) : command}`).join('\n')}
+
+Options
+${optionRows.map(([usage, scope, text]) => `  ${ui.pad(usage, optionWidth)}${ui.pad(scope, scopeWidth)}${text}`).join('\n')}
+
+Safety: Apex CLI never disrupts an existing setup
+  * Nothing is written unless you confirm, or pass --apply. The default is a preview.
+  * Every existing file is copied to a sibling .apex-backup-<id> (mode 0600) before it changes.
+  * Comments, unknown keys and your current default model are preserved.
+  * Your API key is never written, stored or validated: export CALLSTACK_AUTH_TOKEN yourself.
+  * Malformed, conflicting or symlinked configuration is refused instead of overwritten.
+  * apex undo reverts only what Apex CLI wrote, and only while nothing else touched those files.
+
+Environment
+  CALLSTACK_AUTH_TOKEN   required by apex run and by every configured assistant
+  XDG_CONFIG_HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, PI_CODING_AGENT_DIR   assistant config locations
+  APEX_STATE_DIR, XDG_STATE_HOME   where the undo journal lives (default ~/.local/state/apex)
+
+Examples
+  apex init                                          pick, review and confirm
+  apex init --dry-run                                preview everything, write nothing
+  apex init --assistants codex,pi --no-interactive   preview two tools (agent/CI friendly)
+  apex init --assistants codex,pi --apply            actually write those two
+  apex undo --dry-run                                preview the reversal
+  apex detect --json                                 machine-readable inventory
+
+Exit codes: 0 success, nothing to do, or you declined; 1 error or configuration Apex CLI refuses to touch.
+Node.js 22+ required. Codex profiles target 0.134.0+`;
+
+function readFlags(rest, command) {
+  const { values } = parseArgs({ args: rest, options: OPTIONS, allowPositionals: false });
+  const unsupported = Object.keys(values).filter(name => !flagsOf(command).includes(name));
+  if (unsupported.length) throw new Error(`--${unsupported[0]} is not valid for apex ${command}. See apex --help.`);
+  const selected = values.assistants === undefined ? null : [...new Set(values.assistants.split(',').map(id => id.trim()))];
+  if (selected?.includes('')) throw new Error('--assistants needs at least one id.');
+  if (selected?.some(id => !IDS.includes(id))) throw new Error(`Unknown assistant in --assistants. Choose from: ${IDS.join(', ')}`);
+  const json = Boolean(values.json);
+  return {
+    selected,
+    showDiff: !values['no-diff'],
+    json,
+    help: Boolean(values.help),
+    list: Boolean(values.list),
+    mode: resolveMode({
+      dryRun: Boolean(values['dry-run']),
+      apply: Boolean(values.apply || values.yes),
+      nonInteractive: Boolean(values['no-interactive'] || json),
+    }),
+  };
+}
+
+async function planAll(assistants, { secret, showDiff = true } = {}) {
+  return Promise.all(assistants.map(async assistant => {
+    const base = {
+      id: assistant.id,
+      name: NAMES[assistant.id],
+      detected: assistant.detected,
+      evidence: assistant.binary || assistant.evidence || null,
+      manual: MANUAL_IDS.includes(assistant.id),
+      error: null,
+      files: [],
+    };
+    try {
+      base.files = (await planAssistant(assistant)).map(change => describeFile(change, { secret, showDiff }));
+    } catch (error) {
+      base.error = error.message;
+    }
+    return base;
+  }));
+}
+
+const token = () => process.env.CALLSTACK_AUTH_TOKEN?.trim() || undefined;
+
+// Journal timestamps are ISO for machines; people just want to recognise the run.
+const stamp = iso => iso.replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
+
+const pendingOf = entry => entry.files.filter(file => file.status !== 'unchanged');
+const jsonFile = (file, secret) => ({
+  path: file.path,
+  status: file.status,
+  changes: maskChanges(file.changes, secret),
+});
+const jsonAssistant = (entry, secret) => ({
+  id: entry.id,
+  name: entry.name,
+  detected: entry.detected,
+  evidence: entry.evidence,
+  manual: entry.manual,
+  ...(entry.error ? { error: entry.error } : {}),
+  files: entry.files.map(file => jsonFile(file, secret)),
+});
+
+function pickerOptions(entries) {
+  return entries.map(entry => {
+    const pending = pendingOf(entry).length;
+    return {
+      value: entry.id,
+      label: entry.detected ? entry.name : `${entry.name} (not detected)`,
+      hint: entry.manual ? 'manual steps only'
+        : entry.error ? 'needs attention'
+          : pending ? 'not set up yet' : 'already configured',
+    };
+  });
+}
+
+async function commandInit(rest) {
+  const flags = readFlags(rest, 'init');
+  if (flags.help) { console.log(ui.model(HELP)); return; }
+  const secret = token();
+  // The machine payload carries values, not diffs, so do not pay for a diff nobody reads.
+  const options = { secret, showDiff: flags.showDiff && !flags.json };
+  const journalFile = journalPath();
+  const batch = randomUUID();
+  const entries = await planAll(await detect(), options);
+  let ids = flags.selected ?? entries.filter(entry => entry.detected).map(entry => entry.id);
+  if (flags.json) {
+    // Machine callers pick with --assistants and never get a prompt.
+  } else {
+    ui.intro('Apex CLI · Configure callstack/Apex for your favorite harness', MODE_NOTE[flags.mode]);
+    if (flags.mode === 'prompt' && !flags.selected) {
+      const defaults = entries.filter(entry => entry.detected && !entry.manual && !entry.error && pendingOf(entry).length)
+        .map(entry => entry.id);
+      const picked = await ui.selectAssistants(pickerOptions(entries), defaults);
+      if (picked === false) return;
+      ids = picked;
+    }
+  }
+  const chosen = ids.map(id => entries.find(entry => entry.id === id));
+  const blocked = chosen.filter(entry => entry.error);
+  const manual = chosen.filter(entry => entry.manual && !entry.error);
+  const active = chosen.filter(entry => !entry.manual && !entry.error);
+  const files = active.flatMap(entry => entry.files);
+  const pending = files.filter(file => file.status !== 'unchanged').map(file => file.change);
+
+  // One apply step, used by the interactive report and by --json alike.
+  const applyOne = async change => {
+    const backup = await writeChange(change);
+    await appendEntry(journalFile, { ...newEntryFields(change, batch), backup });
+    return backup;
+  };
+
+  if (flags.json) {
+    // A write that fails halfway still leaves files moved on disk, so the payload is emitted with
+    // whatever already landed plus the error, rather than nothing at all.
+    const applied = [];
+    let failure = null;
+    try {
+      if (flags.mode === 'apply' && !blocked.length) for (const change of pending) { await applyOne(change); applied.push(change.path); }
+    } catch (error) { failure = error; }
+    console.log(JSON.stringify({
+      command: 'init',
+      mode: flags.mode,
+      model: MODEL,
+      endpoint: BASE_URL,
+      applied: applied.length,
+      appliedPaths: applied,
+      ...(failure ? { error: failure.message } : {}),
+      blocked: blocked.map(entry => ({ id: entry.id, error: entry.error })),
+      manualSetup: manual.map(entry => entry.id),
+      assistants: chosen.map(entry => jsonAssistant(entry, secret)),
+      journal: journalFile,
+      undo: 'apex undo',
+      envVar: 'CALLSTACK_AUTH_TOKEN',
+      nextSteps: active.filter(entry => RUNNABLE.includes(entry.id)).map(entry => `apex run ${entry.id}`),
+    }, null, 2));
+    if (blocked.length || failure) process.exitCode = 1;
+    return;
+  }
+
+  if (!ids.length) {
+    ui.outro('No assistant selected, so nothing was written. Pick one with --assistants or run apex init interactively.');
+    return;
+  }
+  if (flags.mode !== 'prompt') {
+    ui.prose(`${ui.gray('setup for:')} ${chosen.map(entry => entry.name + (entry.detected ? '' : ' (not detected)')).join(', ')}`);
+  }
+  if (blocked.length) {
+    ui.plain('');
+    for (const entry of blocked) ui.error(`${entry.name}: ${shortPath(entry.error)}`);
+    ui.outro('Blocked by the configuration problems above. Nothing was written. Fix those files and run apex init again.');
+    process.exitCode = 1;
+    return;
+  }
+  for (const entry of manual) {
+    ui.section(`Manual setup for ${entry.name}: Apex CLI writes nothing`, MANUAL[entry.id]);
+  }
+  if (active.length) {
+    await runWrites({
+      title: 'Planned changes',
+      files,
+      options,
+      mode: flags.mode,
+      prompt: 'Apply these changes?',
+      hint: 'Existing files get a .apex-backup-<id> copy first.',
+      pending,
+      write: async change => {
+        const backup = await applyOne(change);
+        return `${ui.bold(shortPath(change.path))} ${ui.dim(backup ? `backup: ${basename(backup)}` : 'created')}`;
+      },
+    });
+  }
+  ui.section('Environment', [
+    ...(secret ? [] : ['export CALLSTACK_AUTH_TOKEN=<your callstack.ai key>']),
+    secret ? `${ui.green('\u2713')} CALLSTACK_AUTH_TOKEN is set in this shell`
+      : `${ui.yellow('!')}  CALLSTACK_AUTH_TOKEN is not set here yet`,
+    ui.dim('Apex CLI never reads, stores or logs the key itself.'),
+  ]);
+  const runnable = active.map(entry => entry.id).filter(id => RUNNABLE.includes(id));
+  const rows = runnable.map(id => ({ command: `apex run ${id}`, expansion: runExpansion(id) }));
+  const commandWidth = ui.columnWidth(rows.map(row => row.command));
+  ui.section(runnable.length
+    ? `Use these commands to run ${MODEL} with your selected harnesses:`
+    : `Use ${MODEL} with your assistant:`, [
+    ...rows.map(row => `${ui.pad(row.command, commandWidth)}${ui.dim(row.expansion)}`),
+    '',
+    `...or pick "${MODEL}" from the UI when setting up manually.`,
+    `For more instructions, visit: ${ui.link(GUIDE_URL)}`,
+    // A preview wrote nothing, so there is nothing to take back yet.
+    ...(flags.mode === 'preview' ? [] : ['', `If you want to undo the changes, run ${ui.bold('apex undo')}`]),
+  ]);
+}
+
+async function commandDetect(rest) {
+  const flags = readFlags(rest, 'detect');
+  if (flags.help) { console.log(ui.model(HELP)); return; }
+  const secret = token();
+  const entries = await planAll(await detect(), { secret, showDiff: false });
+  if (flags.json) {
+    console.log(JSON.stringify(entries.map(entry => jsonAssistant(entry, secret)), null, 2));
+    return;
+  }
+  ui.intro('Apex CLI · What this machine has', 'Read only: nothing is created, edited or removed.');
+  const rows = entries.map(entry => {
+    const pending = pendingOf(entry).length;
+    return {
+      entry,
+      text: entry.manual ? 'manual setup'
+        : entry.error ? 'unreadable config'
+          : pending ? 'needs setup' : 'already configured',
+      shade: entry.manual ? ui.dim : entry.error || pending ? ui.yellow : ui.gray,
+    };
+  });
+  const nameWidth = ui.columnWidth(rows.map(row => row.entry.name));
+  const stateWidth = ui.columnWidth(rows.map(row => row.text));
+  // `found` and `absent` share one column, so the room left for the evidence is fixed; when the
+  // terminal is too narrow for it, the evidence is dropped rather than squeezing the names.
+  const lead = 8 + nameWidth + stateWidth;
+  const room = ui.width() - 3 - lead;
+  for (const { entry, text, shade } of rows) {
+    const found = entry.evidence ? shortPath(entry.evidence) : 'no config found';
+    const evidence = room >= 8 ? ui.clip(found, room) : '';
+    ui.plain(`${entry.detected ? ui.green('found') : ui.dim('absent')}  ${ui.pad(entry.name, nameWidth)}${shade(ui.pad(text, stateWidth))}${ui.dim(evidence)}`);
+  }
+  ui.outro('Next: apex init');
+}
+
+async function commandUndo(rest) {
+  const flags = readFlags(rest, 'undo');
+  if (flags.help) { console.log(ui.model(HELP)); return; }
+  const secret = token();
+  const options = { secret, showDiff: flags.showDiff && !flags.json };
+  const journalFile = journalPath();
+  const entries = await readJournal(journalFile);
+  if (flags.list) {
+    const batches = [...new Set(entries.map(entry => entry.batch))];
+    ui.intro('Apex CLI · Setup history', 'Only the journal is read here; configs stay untouched.');
+    for (const batch of batches) {
+      const items = entries.filter(entry => entry.batch === batch);
+      ui.prose(`${ui.gray(stamp(items[0].at))}  ${ui.bold(items.length === 1 ? '1 file' : `${items.length} files`)}  ${items.every(item => item.undoneAt) ? ui.gray('undone') : ui.yellow('pending')}`);
+      for (const item of items) ui.prose(`${ui.dim(ui.clip(shortPath(item.path), ui.width() - 3))}${item.undoneAt ? ui.gray('  (already undone)') : ''}`);
+    }
+    if (!batches.length) ui.plain(ui.dim('nothing recorded yet'));
+    ui.outro(`Journal: ${shortPath(journalFile)}`);
+    return;
+  }
+  const plan = await planUndo(entries);
+  const skipped = plan?.planned.filter(item => item.action === 'skip') ?? [];
+  const restorable = [];
+  const files = [];
+  for (const item of plan?.planned.filter(entry => entry.action !== 'skip') ?? []) {
+    try {
+      files.push({ ...describeFile(item.change, options), status: item.action === 'remove' ? 'remove' : 'restore' });
+      restorable.push(item);
+    } catch (error) {
+      // Display values are a view of the change, not a precondition for reversing it: one file
+      // Apex CLI cannot read is reported and left alone instead of cancelling the whole undo.
+      skipped.push({ entry: item.entry, reason: `its stored contents cannot be read: ${error.message}` });
+    }
+  }
+
+  // One apply step, used by the interactive report and by --json alike. Returns the backup it kept.
+  const applyOne = async item => {
+    if (item.action === 'remove') await removeChange(item.change);
+    const backup = item.action === 'restore' ? await writeChange(item.change) : null;
+    await markUndone(journalFile, item.entry);
+    return backup;
+  };
+
+  if (flags.json) {
+    const applied = [];
+    let failure = null;
+    try {
+      if (flags.mode === 'apply') for (const item of restorable) { await applyOne(item); applied.push(item.entry.path); }
+    } catch (error) { failure = error; }
+    console.log(JSON.stringify({
+      command: 'undo',
+      mode: flags.mode,
+      journal: journalFile,
+      batch: plan?.batch ?? null,
+      at: plan?.at ?? null,
+      applied: applied.length,
+      appliedPaths: applied,
+      ...(failure ? { error: failure.message } : {}),
+      files: files.map(file => jsonFile(file, secret)),
+      skipped: skipped.map(item => ({ path: item.entry.path, reason: item.reason })),
+    }, null, 2));
+    if (failure) process.exitCode = 1;
+    return;
+  }
+
+  ui.intro('Apex CLI · Undo the last setup', MODE_NOTE[flags.mode]);
+  if (!plan) {
+    ui.outro(entries.length
+      ? `Everything Apex CLI has written here has already been undone. History: apex undo --list (journal: ${shortPath(journalFile)})`
+      : `Nothing recorded yet, so nothing to undo. Journal: ${shortPath(journalFile)}`);
+    return;
+  }
+  if (skipped.length) ui.plain('');
+  for (const item of skipped) ui.warn(`${ui.bold(shortPath(item.entry.path))} stays as it is: ${shortPath(item.reason)}`);
+  if (!restorable.length) {
+    ui.outro('No file in the most recent setup can be restored safely. Nothing was written.');
+    return;
+  }
+  const result = await runWrites({
+    title: `Undo of the setup from ${stamp(plan.at)}`,
+    files,
+    options,
+    mode: flags.mode,
+    prompt: 'Undo these changes?',
+    hint: 'Files Apex CLI created are deleted; edited files go back to their pre-setup contents.',
+    pending: restorable,
+    write: async item => {
+      const backup = await applyOne(item);
+      const path = ui.bold(shortPath(item.entry.path));
+      return item.action === 'remove'
+        ? `${path} ${ui.dim('deleted (Apex CLI created it)')}`
+        : `${path} ${ui.dim(`restored; current contents kept as ${basename(backup)}`)}`;
+    },
+  });
+  if (result.applied) ui.outro('Undone. Configs are back to how they were. Restart any open assistant to reload them.');
+}
+
+async function commandRun(rest) {
+  const [id, ...passed] = rest;
+  if (!RUNNABLE.includes(id)) throw new Error(`apex run needs one of: ${RUNNABLE.join(', ')}. See apex --help.`);
+  const options = launchOptions(id);
+  const binary = await executable(id);
+  if (!binary) throw new Error(`${id} was not found on PATH. Install it first, then run apex init.`);
+  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(binary)) {
+    throw new Error('Windows .cmd/.bat launchers are not executed through a shell. Use WSL or launch the configured assistant directly.');
+  }
+  const args = passed[0] === '--' ? passed.slice(1) : passed;
+  const child = spawn(binary, [...options.args, ...args], { env: options.env, stdio: 'inherit', shell: false });
+  await new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('exit', (code, signal) => { process.exitCode = code ?? (signal === 'SIGINT' ? 130 : 1); resolve(); });
+  });
+}
+
+// Completions are generated from the same COMMANDS/FLAGS tables the parser reads, so a shell can
+// never offer a flag for a command that would reject it.
+const GLOBALS = [['--version', 'print the version'], ['--help', 'show all commands']];
+
+// One description of a flag, then each shell dialect only formats it.
+const completionsFor = command => COMMANDS[command].flags.map(flag => ({
+  long: `--${flag}`,
+  short: FLAGS[flag].short ? `-${FLAGS[flag].short}` : null,
+  hint: FLAGS[flag].hint,
+  // `--assistants` is the one flag whose value the shells can complete from a table.
+  ...(command === 'init' && flag === 'assistants' ? { values: IDS } : {}),
+}));
+const spellings = entry => [entry.long, entry.short].filter(Boolean);
+
+function completionScript(shell) {
+  const taking = Object.keys(COMMANDS).filter(name => COMMANDS[name].flags.length);
+  const words = list => list.join(' ');
+  if (shell === 'zsh') {
+    return `#compdef apex
+_apex() {
+  local -a commands assistants${taking.length ? ' ' : ''}${words(taking.map(name => `${name}_flags`))}
+  commands=(${words([
+      ...Object.entries(COMMANDS).map(([name, command]) => `'${name}:${command.summary}'`),
+      ...GLOBALS.map(([flag, text]) => `'${flag}:${text}'`),
+    ])})
+  assistants=(${words(IDS)})
+${taking.map(name => `  ${name}_flags=(${words(completionsFor(name).flatMap(entry =>
+    spellings(entry).map(word => `'${word}:${entry.hint}'`)))})`).join('\n')}
+  if (( CURRENT == 2 )); then
+    _describe -t commands 'apex command' commands
+  elif [[ "\${words[CURRENT - 1]}" == --assistants ]]; then
+    _describe -t assistants 'assistant' assistants
+  else
+    case "\${words[2]}" in
+${taking.map(name => `      ${name}) _describe -t flags 'option' ${name}_flags ;;`).join('\n')}
+      run) _describe -t assistants 'assistant' assistants ;;
+      completion) _describe -t shells 'shell' '(${words(SHELLS)})' ;;
+    esac
+  fi
+}
+compdef _apex apex
+`;
+  }
+  if (shell === 'bash') {
+    return `_apex_completions() {
+  local sub="\${COMP_WORDS[2]}" prev="\${COMP_WORDS[COMP_CWORD - 1]}" current="\${COMP_WORDS[COMP_CWORD]}"
+  local assistants="${words(IDS)}"
+  if [[ "$prev" == --assistants ]]; then COMPREPLY=( $(compgen -W "$assistants" -- "$current") ); return; fi
+  case "$COMP_CWORD" in
+    1) COMPREPLY=( $(compgen -W "${words([...Object.keys(COMMANDS), ...GLOBALS.map(([flag]) => flag)])}" -- "$current") ) ;;
+    2) case "$sub" in
+${taking.map(name => `         ${name}) COMPREPLY=( $(compgen -W "${words(completionsFor(name).flatMap(spellings))}" -- "$current") ) ;;`).join('\n')}
+         run) COMPREPLY=( $(compgen -W "$assistants" -- "$current") ) ;;
+         completion) COMPREPLY=( $(compgen -W "${words(SHELLS)}" -- "$current") ) ;;
+       esac ;;
+  esac
+}
+complete -F _apex_completions apex
+`;
+  }
+  const fish = (condition, { long, short, hint, values }) =>
+    `complete -c apex -f -n "${condition}" -l ${long.slice(2)}`
+    + `${short ? ` -s ${short.slice(1)}` : ''}${values ? ` -a "${words(values)}"` : ''} -d '${hint}'`;
+  return [
+    ...Object.entries(COMMANDS).map(([name, command]) => `complete -c apex -f -n "__fish_use_subcommand" -a ${name} -d '${command.summary}'`),
+    ...GLOBALS.map(([flag, hint]) => `complete -c apex -f -n "__fish_use_subcommand" -l ${flag.slice(2)} -d '${hint}'`),
+    ...taking.flatMap(name => completionsFor(name).map(entry => fish(`__fish_seen_subcommand_from ${name}`, entry))),
+    ...IDS.map(id => `complete -c apex -f -n "__fish_seen_subcommand_from run" -a ${id} -d 'assistant'`),
+    ...SHELLS.map(name => `complete -c apex -f -n "__fish_seen_subcommand_from completion" -a ${name} -d 'shell'`),
+  ].join('\n') + '\n';
+}
+
+function commandCompletion(rest) {
+  const [shell] = rest;
+  if (!SHELLS.includes(shell)) throw new Error(`apex completion needs one of: ${SHELLS.join(', ')}.`);
+  process.stdout.write(completionScript(shell));
+}
+
+async function main(argv) {
+  const [command, ...rest] = argv;
+  if (!command || ['--help', '-h', 'help'].includes(command)) { console.log(ui.model(HELP)); return; }
+  if (['--version', '-v'].includes(command)) {
+    console.log(JSON.parse(await readFile(new URL('../package.json', import.meta.url))).version);
+    return;
+  }
+  if (command === 'completion') return commandCompletion(rest);
+  if (command === 'run') return commandRun(rest);
+  if (command === 'init') return commandInit(rest);
+  if (command === 'detect') return commandDetect(rest);
+  if (command === 'undo') return commandUndo(rest);
+  throw new Error(`Unknown command: ${command}. See apex --help.`);
+}
+
+main(process.argv.slice(2)).catch(error => {
+  const line = `Apex CLI: ${error.message}`;
+  if (interactive()) console.error(styleText('red', line));
+  else console.error(line);
+  process.exitCode = 1;
+});
+
+// `apex init | head -1` closes the pipe early; quitting quietly beats a stack trace.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', error => {
+    if (error.code === 'EPIPE') process.exit(process.exitCode ?? 0);
+    throw error;
+  });
+}

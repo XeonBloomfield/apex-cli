@@ -6,7 +6,13 @@ import { editJson, parseJson, readConfig, addToml } from './config.js';
 
 export const MODEL = 'callstack/Apex';
 export const BASE_URL = 'https://api.callstack.ai/v1';
+export const GUIDE_URL = 'https://app.notion.com/p/callstack/Apex-how-to-use-it-36d5d027c0f880e99d03d1c37a77382f';
 export const IDS = ['opencode', 'codex', 'claude', 'pi', 'cursor', 'copilot'];
+export const NAMES = {
+  opencode: 'OpenCode', codex: 'Codex', claude: 'Claude Code', pi: 'Pi',
+  cursor: 'Cursor', copilot: 'VS Code (Copilot)',
+};
+export const RUNNABLE = ['codex', 'claude', 'opencode', 'pi'];
 
 async function exists(path) {
   try { await stat(path); return true; }
@@ -69,7 +75,7 @@ export async function planAssistant(assistant) {
     const path = join(assistant.directory, filename);
     const before = await readConfig(path);
     const after = editJson(before, typeof updates === 'function' ? updates(parseJson(before, path)) : updates, path);
-    changes.push({ path, before, after });
+    changes.push({ path, before, after, format: 'json' });
   };
   switch (assistant.id) {
     case 'opencode': {
@@ -116,7 +122,7 @@ export async function planAssistant(assistant) {
           wire_api: 'responses', requires_openai_auth: false,
         } },
       }, path);
-      changes.push({ path, before, after });
+      changes.push({ path, before, after, format: 'toml' });
       break;
     }
   }
@@ -144,7 +150,23 @@ export function launchOptions(id, env = process.env) {
   }
 }
 
+// What `apex run <id>` actually types for you, so the summary can show the command it replaces.
+// The placeholder token is never shown: only the argument list is part of the expansion.
+const RUN_NOTE = { claude: '(ANTHROPIC_* gateway environment set)' };
+
+export function runExpansion(id) {
+  const { args } = launchOptions(id, { CALLSTACK_AUTH_TOKEN: 'placeholder' });
+  return [`${id} ${args.join(' ')}`, RUN_NOTE[id]].filter(Boolean).join('  ');
+}
+
 export const MANUAL = {
-  cursor: `Cursor: Settings → Models → API Keys → OpenAI API Key. Enter your Callstack key,\n  override the base URL with ${BASE_URL}, add and enable ${MODEL}, then select it in Agent.`,
-  copilot: `VS Code (Copilot installation not verified): Copilot → model selector → Manage Models → Add Models\n  → Custom Endpoint → name callstack.ai → enter your key → Chat Completions.\n  Keep the generated apiKey secret reference; add this object to its models array:\n  ${JSON.stringify({ id: MODEL, name: 'Apex', url: BASE_URL, toolCalling: true, vision: true })}`,
+  cursor: [
+    `Cursor: Settings → Models → API Keys → OpenAI API Key. Enter your Callstack key, override the base URL with ${BASE_URL}, add and enable ${MODEL}, then select it in Agent.`,
+  ],
+  copilot: [
+    'Installation of Copilot itself is not verified: Copilot → model selector → Manage Models → Add Models → Custom Endpoint → name callstack.ai → enter your key → Chat Completions.',
+    'Keep the generated apiKey secret reference; add this object to its models array:',
+    JSON.stringify({ id: MODEL, name: 'Apex', url: BASE_URL, toolCalling: true, vision: true }),
+  ],
 };
+export const MANUAL_IDS = Object.keys(MANUAL);
