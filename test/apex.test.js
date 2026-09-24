@@ -617,7 +617,13 @@ test('each command accepts only its own flags, and help says who accepts what', 
 test('help is coloured, ordered and fits a narrow terminal', async context => {
   const { env } = await fixture(context);
   const help = cli(['--help'], { ...env, NO_COLOR: '0', FORCE_COLOR: '1', COLUMNS: '100' }).stdout;
-  assert.match(help, /\u001b\[32mapex init/, 'commands are green');
+  // Every command line: `apex` green, the command plain, whatever follows dim.
+  assert.match(help, /\u001b\[32mapex\u001b\[39m init\u001b\[2m \[--assistants <ids>\] \[options\]\u001b\[22m/);
+  assert.match(help, /\u001b\[32mapex\u001b\[39m init\u001b\[2m --assistants codex,pi --apply\u001b\[22m/);
+  assert.match(help, /\u001b\[32mapex\u001b\[39m completion\u001b\[2m bash >> ~\/\.bashrc\u001b\[22m/);
+  assert.match(help, /\u001b\[32mapex\u001b\[39m help +show all commands/, 'a bare command leaves no empty dim span');
+  const wrapped = cli(['--help'], { ...env, NO_COLOR: '0', FORCE_COLOR: '1', COLUMNS: '44' }).stdout;
+  assert.match(wrapped, /^ {2}\u001b\[2m<args>\]\u001b\[22m$/m, 'a wrapped command continues dim');
   assert.match(help, /\u001b\[1m\u001b\[4mUsage/, 'sections are bold and underlined');
   assert.match(help, /callstack\/Apex.*\u001b\[32m|\u001b\[32mcallstack\/Apex/, 'the model is green');
   // The promises belong in the README, and the safe default needs no flag to explain it.

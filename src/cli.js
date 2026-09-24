@@ -87,6 +87,10 @@ const rowColors = (lead, scope = PLAIN, text = PLAIN) => ({ lead, scope, text })
 // Only real flags are green: `(no flags)` is a description of a case, not something to type.
 const optionColors = rowColors(
   text => (text.startsWith('--') ? ui.green(text) : ui.dim(text)), ui.dim, PLAIN);
+// Every command line reads the same way: `apex` green, the command plain, whatever follows dim.
+// A command that wraps keeps colouring by position: only its first line starts with `apex`.
+const commandLine = (line, index = 0) => (index ? ui.dim(line)
+  : line.replace(/^(apex)( \S+)?(.*)$/, (_, apex, command = '', rest) => ui.green(apex) + command + (rest && ui.dim(rest))));
 
 // Three columns: what you type, who accepts it, what it does. Column widths are measured on plain
 // text and colour goes on when a line is emitted.
@@ -103,15 +107,15 @@ function columnRows(rows, color, width) {
     const head = `${INDENT}${ui.pad(color.lead(lead), leadWidth)}${scope ? ui.pad(color.scope(scope), scopeWidth) : ''}`;
     if (stacked || lead.length + 1 > leadWidth) {
       const leadLines = ui.wrap(lead, width - INDENT.length);
-      leadLines.forEach((part, index) => lines.push(`${INDENT}${color.lead(part)}${
+      leadLines.forEach((part, index) => lines.push(`${INDENT}${color.lead(part, index)}${
         index === leadLines.length - 1 && scope ? ` ${color.scope(scope)}` : ''}`));
       const below = `${INDENT}    `;
-      for (const line of ui.wrap(text, width - below.length)) lines.push(below + color.text(line));
+      for (const line of ui.wrap(text, width - below.length).map(color.text)) lines.push(below + line);
       continue;
     }
-    const [first, ...rest] = ui.wrap(text, width - textCol);
-    lines.push((head + color.text(first)).replace(/\s+$/, ''));
-    for (const line of rest) lines.push(' '.repeat(textCol) + color.text(line));
+    const [first, ...rest] = ui.wrap(text, width - textCol).map(color.text);
+    lines.push((head + first).replace(/\s+$/, ''));
+    for (const line of rest) lines.push(' '.repeat(textCol) + line);
   }
   return lines;
 }
@@ -123,11 +127,11 @@ function helpText() {
   return [
     ...ui.wrap(`Apex CLI: point your coding assistants at ${MODEL}`, width).map(line => ui.bold(ui.model(line))),
     '',
-    ...section('Usage', usageRows.map(([lead, text]) => [lead, '', text]), rowColors(ui.green, PLAIN, PLAIN)),
+    ...section('Usage', usageRows.map(([lead, text]) => [lead, '', text]), rowColors(commandLine)),
     ...section('Options', optionRows, optionColors),
-    ...section('Examples', exampleRows.map(([lead, text]) => [lead, '', text]), rowColors(ui.green, PLAIN, ui.dim)),
+    ...section('Examples', exampleRows.map(([lead, text]) => [lead, '', text]), rowColors(commandLine, PLAIN, ui.dim)),
     ...section('Environment', environmentRows.map(([lead, text]) => [lead, '', text]), rowColors(ui.yellow, PLAIN, PLAIN)),
-    ...section('Install completions', installRows.map(([lead, text]) => [lead, '', text]), rowColors(ui.green, PLAIN, PLAIN)),
+    ...section('Install completions', installRows.map(([lead, text]) => [lead, '', text]), rowColors(PLAIN, PLAIN, commandLine)),
     ...ui.wrap('Restart the shell afterwards, or rehash zsh and re-source your bashrc.', width - INDENT.length)
       .map(line => `${INDENT}${ui.dim(line)}`),
     '',
