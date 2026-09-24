@@ -159,6 +159,10 @@ export function runExpansion(id) {
   return [`${id} ${args.join(' ')}`, RUN_NOTE[id]].filter(Boolean).join('  ');
 }
 
+// One line per key: the whole object on one line cannot be folded to a terminal, and a step that
+// wraps into the gutter loses its shape.
+const COPILOT_MODEL = JSON.stringify({ id: MODEL, name: 'Apex', url: BASE_URL, toolCalling: true, vision: true }, null, 2);
+
 export const MANUAL = {
   cursor: [
     `Cursor: Settings → Models → API Keys → OpenAI API Key. Enter your Callstack key, override the base URL with ${BASE_URL}, add and enable ${MODEL}, then select it in Agent.`,
@@ -166,7 +170,7 @@ export const MANUAL = {
   copilot: [
     'Installation of Copilot itself is not verified: Copilot → model selector → Manage Models → Add Models → Custom Endpoint → name callstack.ai → enter your key → Chat Completions.',
     'Keep the generated apiKey secret reference; add this object to its models array:',
-    JSON.stringify({ id: MODEL, name: 'Apex', url: BASE_URL, toolCalling: true, vision: true }),
+    ...COPILOT_MODEL.split('\n'),
   ],
 };
 export const MANUAL_IDS = Object.keys(MANUAL);

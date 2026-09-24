@@ -260,9 +260,6 @@ async function commandInit(rest) {
     process.exitCode = 1;
     return;
   }
-  for (const entry of manual) {
-    ui.section(`Manual setup for ${entry.name}: Apex CLI writes nothing`, MANUAL[entry.id]);
-  }
   if (active.length) {
     await runWrites({
       title: 'Planned changes',
@@ -277,6 +274,11 @@ async function commandInit(rest) {
         return `${ui.bold(shortPath(change.path))} ${ui.dim(backup ? `backup: ${basename(backup)}` : 'created')}`;
       },
     });
+  }
+  // Steps for the assistants Apex CLI will not touch come after the diff, which is the part
+  // people are reviewing.
+  for (const entry of manual) {
+    ui.section(`Manual setup for ${entry.name}: Apex CLI writes nothing`, MANUAL[entry.id]);
   }
   ui.section('Environment', [
     ...(secret ? [] : ['export CALLSTACK_AUTH_TOKEN=<your callstack.ai key>']),

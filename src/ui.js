@@ -26,11 +26,22 @@ const GUTTER = '   ';
 // Widths are always measured on the visible text, so colour can never push a line over the edge.
 const visible = text => text.replace(/\u001b\[[0-9;]*m/g, '');
 
+// A URL must stay whole to remain openable; anything else that cannot fit is cut, because the
+// alternative is the terminal breaking the line at column 0 for us.
+const unbreakable = word => /^[a-z][a-z0-9+.-]*:\/\//i.test(word);
+
+function pieces(text, limit) {
+  return text.split(' ').flatMap(word =>
+    unbreakable(word) || visible(word).length <= limit
+      ? [word]
+      : word.match(new RegExp(`.{1,${limit}}`, 'g'),));
+}
+
 function wrap(text, limit) {
   if (visible(text).length <= limit) return [text];
   const lines = [];
   let line = '';
-  for (const word of text.split(' ')) {
+  for (const word of pieces(text, limit)) {
     if (line && visible(`${line} ${word}`).length > limit) { lines.push(line); line = word; }
     else line = line ? `${line} ${word}` : word;
   }

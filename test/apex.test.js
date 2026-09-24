@@ -464,6 +464,20 @@ test('manual adapters never write editor credentials', async context => {
   assert.deepEqual(await readdir(home), []);
 });
 
+test('manual steps come after the diff, and their snippets never lose their shape', async context => {
+  const { env } = await fixture(context);
+  await seedHome(env);
+  const result = cli(['init', '--assistants', 'opencode,copilot,cursor', '--dry-run'], env);
+  assert.equal(result.status, 0, result.stderr);
+  const plan = result.stdout.indexOf('Planned changes:');
+  const manual = result.stdout.indexOf('Manual setup for');
+  assert.ok(plan >= 0 && manual > plan, result.stdout);
+  // The model object is one key per line, so it survives a narrow terminal as valid JSON.
+  for (const key of ['"id"', '"url"', '"toolCalling"', '"vision"']) {
+    assert.match(result.stdout, new RegExp(`^ +${key}: `, 'm'), result.stdout);
+  }
+});
+
 test('CLI run forwards argument boundaries, child environment and exit status', async context => {
   const { home, env } = await fixture(context);
   const bin = join(home, 'bin');
@@ -705,7 +719,8 @@ test('one unreadable restore is reported and skipped, the rest of the undo proce
 test('narrow terminals fold every line inside the gutter instead of spilling to column 0', async context => {
   const { env } = await fixture(context);
   await seedHome(env);
-  for (const args of [[...INIT, '--dry-run'], ['undo', '--dry-run'], ['detect']]) {
+  for (const args of [[...INIT, '--dry-run'], ['undo', '--dry-run'], ['detect'],
+    ['init', '--assistants', 'opencode,copilot,cursor', '--dry-run']]) {
     const result = cli(args, { ...env, COLUMNS: '44' });
     assert.equal(result.status, 0, result.stderr);
     for (const line of result.stdout.split('\n')) {
