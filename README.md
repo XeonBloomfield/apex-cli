@@ -14,9 +14,9 @@ npm ci
 npm link        # puts `apex` on your PATH, pointing at this checkout
 apex --help
 apex detect
-apex init --dry-run
+apex init --no-interactive   # preview only: prints the plan, writes nothing
 apex init       # interactive: pick assistants, review, confirm
-apex undo --dry-run
+apex undo --no-interactive   # preview the reversal
 ```
 
 `npm link` is the standard npm mechanism: `package.json` declares
@@ -34,9 +34,8 @@ step or install scripts are needed on your machine.
 | --- | --- | --- |
 | `apex detect [--json]` | Finds assistants on `PATH`, in config directories and in macOS `/Applications`; shows what would change | No, never |
 | `apex init` | Interactive setup: multiselect of detected assistants, colourised change preview, confirmation | Only after you confirm |
-| `apex init --dry-run` | Same preview, no prompts | No |
-| `apex init --no-interactive` | No prompts; equivalent to `--dry-run` | No |
-| `apex init --apply` | Writes the planned changes without prompting (`--yes`/`-y` are aliases) | Yes |
+| `apex init --no-interactive` | Prints the plan without asking questions | No |
+| `apex init --apply` | Writes the planned changes without asking | Yes |
 | `apex undo` | Reverts the most recent Apex CLI setup, with the same preview and confirmation | Only after you confirm |
 | `apex undo --list` | Shows recorded setups and which are already undone | No |
 | `apex run <assistant> [-- <args>]` | Launches the assistant with the gateway, model and credentials in the child environment | No |
@@ -48,12 +47,13 @@ flag the others reject:
 
 | Command | Flags |
 | --- | --- |
-| `init` | `--assistants <ids>`, `--dry-run`, `--no-interactive`, `--apply`, `--no-diff`, `--json`, `--yes`/`-y`, `--help` |
+| `init` | `--assistants <ids>`, `--no-interactive`, `--apply`, `--no-diff`, `--json`, `--help` |
 | `detect` | `--json`, `--help` |
-| `undo` | `--dry-run`, `--no-interactive`, `--apply`, `--no-diff`, `--json`, `--list`, `--yes`/`-y`, `--help` |
+| `undo` | `--no-interactive`, `--apply`, `--no-diff`, `--json`, `--list`, `--help` |
 
-`--dry-run --apply` is rejected, `apex init --wat` fails fast, and so does a flag in the wrong
-command (`apex detect --no-diff`). `--assistants <ids>` is a comma list of `opencode`, `codex`,
+`apex init --wat` fails fast, and so does a flag in the wrong command
+(`apex detect --no-diff`). Only `--apply` writes, so there is no "preview *and* write" to argue
+about. `--assistants <ids>` is a comma list of `opencode`, `codex`,
 `claude`, `pi`, `cursor`, `copilot`.
 
 Non-interactive callers (`--no-interactive`, `--json`, pipes, CI) never get a prompt and never
@@ -198,7 +198,21 @@ flag and model aliases in the child process only, leaving your default Claude pr
 
 ## Safety and recovery
 
-- Previews print paths and key/value changes, never secrets; dry runs never write.
+Apex CLI will not break what you already have.
+
+- It shows every change first, and writes nothing until you say yes. If you script it, only
+  `--apply` writes.
+- It copies a file next to itself before it edits that file, so you can always put the old one back.
+- It keeps your comments, your other settings, and your default model.
+- It never asks for your API key, writes it down, or sends it anywhere. You keep it in
+  `CALLSTACK_AUTH_TOKEN`, and the CLI prints `<redacted>` wherever a secret would show.
+- If a config file is broken, set up another way, or a link to somewhere else, Apex CLI stops and
+  tells you. It does not overwrite it.
+- `apex undo` gives your old setup back. It only touches files that still match what Apex CLI wrote.
+
+How that works underneath:
+
+- Previews print paths and key/value changes, never secrets.
 - All selected configurations are parsed before any write. Malformed files, conflicting Codex
   profile keys and symlinked files or directories are refused, and one bad assistant blocks the
   whole batch instead of half-applying it.
@@ -223,7 +237,7 @@ and without touching shell profiles. Set `APEX_INSTALL_PREFIX` and/or `APEX_VERS
 
 ```sh
 sh scripts/install.sh
-sh scripts/install.sh --assistants codex,pi --dry-run
+sh scripts/install.sh --assistants codex,pi --no-interactive
 sh scripts/install.sh --assistants codex,pi --apply
 ```
 

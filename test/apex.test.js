@@ -238,10 +238,10 @@ test('launch config scopes Claude credentials without mutating parent environmen
   assert.throws(() => launchOptions('pi', {}), /CALLSTACK_AUTH_TOKEN/);
 });
 
-test('CLI defaults to a preview: dry runs and noninteractive runs never write', async context => {
+test('CLI defaults to a preview: nothing is written without --apply', async context => {
   const { home, env, journal } = await fixture(context);
   await seedHome(env);
-  for (const extra of [['--dry-run'], ['--no-interactive'], []]) {
+  for (const extra of [['--no-interactive'], []]) {
     const result = cli([...INIT, ...extra], env);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, at(/^Planned changes:$/));
@@ -251,7 +251,7 @@ test('CLI defaults to a preview: dry runs and noninteractive runs never write', 
     const written = await readdir(join(env.XDG_CONFIG_HOME, 'opencode'));
     assert.deepEqual(written.filter(name => name.includes('apex-')), [], extra.join(' '));
   }
-  const compact = cli([...INIT, '--dry-run', '--no-diff'], env);
+  const compact = cli([...INIT, '--no-interactive', '--no-diff'], env);
   assert.match(compact.stdout, /provider\.callstack\.ai\.options\.baseURL/);
   const untouched = await Promise.all([
     readFile(join(env.XDG_CONFIG_HOME, 'opencode', 'opencode.json'), 'utf8'),
@@ -264,7 +264,7 @@ test('CLI shows the file diff by default, shortens paths and redacts secrets', a
   const { env } = await fixture(context);
   await seedHome(env);
   await writeConfig(env, 'claude', '{\n  "apiKey": "sk-super-secret-9999",\n  "env": { "CLAUDE_CODE_ATTRIBUTION_HEADER": "1" }\n}\n');
-  const result = cli([...INIT, '--dry-run'], env);
+  const result = cli([...INIT, '--no-interactive'], env);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /@@/);
   assert.ok(!result.stdout.includes('sk-super-secret-9999'), result.stdout);
@@ -273,7 +273,7 @@ test('CLI shows the file diff by default, shortens paths and redacts secrets', a
   assert.match(result.stdout, at(/^--- ~/));
   assert.ok(!result.stdout.includes(env.CLAUDE_CONFIG_DIR), 'diff headers must not leak absolute home paths');
 
-  const compact = cli([...INIT, '--dry-run', '--no-diff'], env);
+  const compact = cli([...INIT, '--no-interactive', '--no-diff'], env);
   assert.equal(compact.status, 0, compact.stderr);
   assert.ok(!compact.stdout.includes('@@'), compact.stdout);
   assert.match(compact.stdout, /~ env\.CLAUDE_CODE_ATTRIBUTION_HEADER  1 \u2192 0/);
@@ -293,26 +293,26 @@ test('the header banner draws a box with aligned edges', async context => {
 test('human output keeps one indentation grid', async context => {
   const { env } = await fixture(context);
   await seedHome(env);
-  const result = cli([...INIT, '--dry-run'], env);
+  const result = cli([...INIT, '--no-interactive'], env);
   assert.equal(result.status, 0, result.stderr);
   const lines = result.stdout.split('\n');
   const row = pattern => lines.some(line => at(pattern).test(line));
   assert.ok(row(/^Planned changes:$/), 'heading');
   assert.ok(row(/^Update +~/), 'file row');
   assert.ok(row(/^\+\S/), 'diff row');
-  const compact = cli([...INIT, '--dry-run', '--no-diff'], env).stdout.split('\n');
+  const compact = cli([...INIT, '--no-interactive', '--no-diff'], env).stdout.split('\n');
   assert.ok(compact.some(line => at(/^[+~-] \S/).test(line)), 'key/value row without --no-diff');
   assert.ok(row(/^--- ~/), 'diff header');
   assert.ok(row(/^Environment$/), 'section heading');
   assert.ok(row(/^\u2713 CALLSTACK_AUTH_TOKEN is set in this shell$/), 'section body');
-  const unset = cli([...INIT, '--dry-run', '--no-diff'], { ...env, CALLSTACK_AUTH_TOKEN: '' }).stdout;
+  const unset = cli([...INIT, '--no-interactive', '--no-diff'], { ...env, CALLSTACK_AUTH_TOKEN: '' }).stdout;
   assert.match(unset, at(/^export CALLSTACK_AUTH_TOKEN=<your callstack\.ai key>$/));
   assert.ok(!at(/^\u2713/).test(unset), unset);
   assert.ok(!lines.some(line => /^\S/.test(line)), `nothing may start at column 0: ${lines.find(l => /^\S/.test(l))}`);
 
   // The longest status label must still be spaced away from the path.
   cli([...INIT, '--apply'], env);
-  assert.match(cli([...INIT, '--dry-run'], env).stdout, at(/^Unchanged {2}~/));
+  assert.match(cli([...INIT, '--no-interactive'], env).stdout, at(/^Unchanged {2}~/));
 });
 
 test('the model id is highlighted green wherever it is shown', async context => {
@@ -320,7 +320,7 @@ test('the model id is highlighted green wherever it is shown', async context => 
   await seedHome(env);
   const color = { ...env, FORCE_COLOR: '1' };
   delete color.NO_COLOR;
-  const result = cli([...INIT, '--dry-run', '--no-diff'], color);
+  const result = cli([...INIT, '--no-interactive', '--no-diff'], color);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /\u001b\[32mcallstack\/Apex\u001b\[39m/);
   assert.match(result.stdout, /Configure \u001b\[32mcallstack\/Apex\u001b\[39m for your favorite harness/);
@@ -335,10 +335,10 @@ test('colour is applied only when stdout is a terminal', async context => {
   delete piped.NO_COLOR;
   delete piped.FORCE_COLOR;
   // spawnSync gives the child a pipe, so colour must switch itself off without NO_COLOR help.
-  assert.ok(!/\u001b\[/.test(cli([...INIT, '--dry-run', '--no-diff'], piped).stdout));
+  assert.ok(!/\u001b\[/.test(cli([...INIT, '--no-interactive', '--no-diff'], piped).stdout));
   const color = { ...env, FORCE_COLOR: '1' };
   delete color.NO_COLOR;
-  assert.match(cli([...INIT, '--dry-run', '--no-diff'], color).stdout, /\u001b\[32m/);
+  assert.match(cli([...INIT, '--no-interactive', '--no-diff'], color).stdout, /\u001b\[32m/);
 });
 
 test('CLI refuses to write when a selected assistant has an unusable config', async context => {
@@ -378,7 +378,7 @@ test('undo restores edited files byte for byte and deletes created files', async
     journal: await readFile(journal, 'utf8'),
     codex: await readFile(join(env.CODEX_HOME, 'callstack_ai.config.toml'), 'utf8'),
   };
-  const preview = cli(['undo', '--dry-run'], env);
+  const preview = cli(['undo', '--no-interactive'], env);
   assert.equal(preview.status, 0, preview.stderr);
   assert.match(preview.stdout, /Undo of the setup from/);
   assert.match(preview.stdout, /Restore .*settings\.json/);
@@ -445,7 +445,7 @@ test('CLI validates flags and commands', async context => {
   assert.equal(cli(['--help'], env).status, 0);
   assert.match(cli(['--help'], env).stdout, /apex undo \[--list\] \[options\]/);
   for (const args of [['wat'], ['init', '--assistants', 'unknown'], ['init', '--assistants', ''], ['init', '--wat'],
-    ['init', '--dry-run', '--apply'], ['undo', '--dry-run', '--apply'], ['run', 'unknown'], ['detect', '--apply']]) {
+    ['init', '--dry-run'], ['init', '--yes'], ['undo', '--yes'], ['run', 'unknown'], ['detect', '--apply']]) {
     assert.equal(cli(args, env).status, 1, args.join(' '));
   }
 });
@@ -467,7 +467,7 @@ test('manual adapters never write editor credentials', async context => {
 test('manual steps come after the diff, and their snippets never lose their shape', async context => {
   const { env } = await fixture(context);
   await seedHome(env);
-  const result = cli(['init', '--assistants', 'opencode,copilot,cursor', '--dry-run'], env);
+  const result = cli(['init', '--assistants', 'opencode,copilot,cursor', '--no-interactive'], env);
   assert.equal(result.status, 0, result.stderr);
   const plan = result.stdout.indexOf('Planned changes:');
   const manual = result.stdout.indexOf('Manual setup for');
@@ -530,7 +530,7 @@ test('closing the pipe early exits quietly instead of crashing', async context =
   const { env } = await fixture(context);
   await seedHome(env);
   const result = spawnSync('/bin/sh', ['-c',
-    `${process.execPath} ${BIN} init --dry-run | /usr/bin/head -2`], { env, encoding: 'utf8' });
+    `${process.execPath} ${BIN} init --no-interactive | /usr/bin/head -2`], { env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Apex/);
   assert.ok(!result.stderr.includes('EPIPE'), result.stderr);
@@ -540,7 +540,7 @@ test('completion scripts are generated for zsh, bash and fish', () => {
   for (const shell of ['zsh', 'bash', 'fish']) {
     const script = cli(['completion', shell], process.env).stdout;
     for (const command of ['init', 'detect', 'undo', 'run', 'completion']) assert.ok(script.includes(command), `${shell}: ${command}`);
-    for (const flag of ['--dry-run', '--apply', '--assistants', '--json']) assert.ok(script.includes(flag.replace('--', shell === 'fish' ? '-l ' : '--')), `${shell}: ${flag}`);
+    for (const flag of ['--no-interactive', '--apply', '--assistants', '--json']) assert.ok(script.includes(flag.replace('--', shell === 'fish' ? '-l ' : '--')), `${shell}: ${flag}`);
     for (const id of ['codex', 'opencode', 'pi']) assert.ok(script.includes(id), `${shell}: ${id}`);
   }
   const rejected = cli(['completion', 'tcsh'], process.env);
@@ -607,19 +607,42 @@ test('--json honours --apply and still reports a batch that failed halfway', asy
 
 test('each command accepts only its own flags, and help says who accepts what', async context => {
   const { env } = await fixture(context);
-  for (const args of [['detect', '--no-diff'], ['detect', '--dry-run'], ['undo', '--assistants', 'codex'], ['run', '--json']]) {
+  for (const args of [['detect', '--no-diff'], ['detect', '--no-interactive'], ['undo', '--assistants', 'codex'], ['run', '--json']]) {
     assert.equal(cli(args, env).status, 1, args.join(' '));
   }
   assert.match(cli(['--help'], env).stdout, /^ {2}--list\s+\(undo\)\s+show recorded setups/m);
   assert.match(cli(['--help'], env).stdout, /^ {2}--assistants <ids>\s+\(init\)/m);
 });
 
+test('help is coloured, ordered and fits a narrow terminal', async context => {
+  const { env } = await fixture(context);
+  const help = cli(['--help'], { ...env, NO_COLOR: '0', FORCE_COLOR: '1', COLUMNS: '100' }).stdout;
+  assert.match(help, /\u001b\[32mapex init/, 'commands are green');
+  assert.match(help, /\u001b\[1m\u001b\[4mUsage/, 'sections are bold and underlined');
+  assert.match(help, /callstack\/Apex.*\u001b\[32m|\u001b\[32mcallstack\/Apex/, 'the model is green');
+  // The promises belong in the README, and the safe default needs no flag to explain it.
+  for (const gone of ['Safety:', 'Exit codes', '--dry-run', '--yes']) {
+    assert.ok(!help.includes(gone), `help still mentions ${gone}`);
+  }
+  // Completion steps are the last thing a reader needs, so they sit at the bottom.
+  const order = ['Usage', 'Options', 'Examples', 'Environment', 'Install completions']
+    .map(name => help.indexOf(`\u001b[1m\u001b[4m${name}`));
+  assert.ok(order.every(index => index >= 0), help);
+  assert.deepEqual(order, [...order].sort((a, b) => a - b), help);
+  // Descriptions wrap instead of running off the edge, however narrow the terminal is.
+  for (const columns of ['120', '80', '60', '44']) {
+    const narrow = cli(['--help'], { ...env, COLUMNS: columns }).stdout.split('\n');
+    const wide = narrow.filter(line => line.length > Number(columns));
+    assert.deepEqual(wide, [], `COLUMNS=${columns}: ${wide.join('\n')}`);
+  }
+});
+
 test('undo renders diffs by default, --no-diff included', async context => {
   const { env } = await fixture(context);
   await seedHome(env);
   assert.equal(cli([...INIT, '--apply'], env).status, 0);
-  assert.match(cli(['undo', '--dry-run'], env).stdout, /@@/);
-  assert.ok(!cli(['undo', '--dry-run', '--no-diff'], env).stdout.includes('@@'));
+  assert.match(cli(['undo', '--no-interactive'], env).stdout, /@@/);
+  assert.ok(!cli(['undo', '--no-interactive', '--no-diff'], env).stdout.includes('@@'));
 });
 
 test('a journal entry with no backup is skipped with a reason instead of crashing undo', async context => {
@@ -630,7 +653,7 @@ test('a journal entry with no backup is skipped with a reason instead of crashin
     batch: 'b1', at: new Date().toISOString(), path, format: 'json', created: false,
     beforeSha: sha256('{}\n'), afterSha: sha256(CLAUDE), backup: null, undoneAt: null,
   }], null, 2));
-  const result = cli(['undo', '--dry-run'], env);
+  const result = cli(['undo', '--no-interactive'], env);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /stays as it is: original backup was never recorded/);
   assert.equal(await readFile(path, 'utf8'), CLAUDE);
@@ -653,7 +676,7 @@ test('completions offer each flag only for the commands that accept it', () => {
   const bash = script('bash');
   const bashBranch = name => bash.split('\n').find(line => line.trim().startsWith(`${name})`));
   assert.match(bashBranch('detect'), /--json/);
-  assert.ok(!bashBranch('detect').includes('--dry-run'), bashBranch('detect'));
+  assert.ok(!bashBranch('detect').includes('--assistants'), bashBranch('detect'));
   assert.match(bashBranch('undo'), /--list/);
   assert.ok(!bashBranch('init').includes('--list'), bashBranch('init'));
 
@@ -662,17 +685,17 @@ test('completions offer each flag only for the commands that accept it', () => {
   assert.match(zsh, /^ {2}local -a commands assistants init_flags detect_flags undo_flags$/m);
   const zshFlags = name => lineWith(zsh, `${name}_flags=`);
   assert.match(zshFlags('detect'), /--json/);
-  assert.ok(!zshFlags('detect').includes('--dry-run'), zshFlags('detect'));
+  assert.ok(!zshFlags('detect').includes('--assistants'), zshFlags('detect'));
   assert.ok(!zshFlags('init').includes('--list'), zshFlags('init'));
   assert.match(zsh, /^ +undo\) _describe -t flags 'option' undo_flags ;;$/m);
-  assert.match(zsh, /'-y:alias for --apply'/);
+  assert.match(zsh, /'-h:show help'/);
 
   const fish = script('fish');
   const fishFlags = name => fish.split('\n').filter(line => line.includes(`__fish_seen_subcommand_from ${name}"`));
   assert.ok(fishFlags('undo').some(each => each.includes('-l list')), fishFlags('undo').join('\n'));
-  assert.ok(!fishFlags('detect').some(each => each.includes('dry-run')), fishFlags('detect').join('\n'));
+  assert.ok(!fishFlags('detect').some(each => each.includes('assistants')), fishFlags('detect').join('\n'));
   assert.match(fish, /-l assistants -a "opencode codex claude pi cursor copilot"/);
-  assert.match(fish, /-l yes -s y/);
+  assert.match(fish, /-l apply -d 'write without prompting'/);
   for (const each of fish.split('\n')) assert.equal((each.match(/'/g) || []).length % 2, 0, each);
   assert.ok(lineWith(fish, '-l version'), 'global flags are completed too');
 });
@@ -709,7 +732,7 @@ test('one unreadable restore is reported and skipped, the rest of the undo proce
   await writeFile(claude.backup, '{ broken');
   claude.beforeSha = sha256('{ broken');
   await writeFile(journal, JSON.stringify(entries, null, 2));
-  const result = cli(['undo', '--dry-run'], env);
+  const result = cli(['undo', '--no-interactive'], env);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /stays as it is: its stored contents cannot be read/);
   assert.match(result.stdout, /^ {3}Delete +~/m, 'the created Codex file is still planned for deletion');
@@ -719,8 +742,8 @@ test('one unreadable restore is reported and skipped, the rest of the undo proce
 test('narrow terminals fold every line inside the gutter instead of spilling to column 0', async context => {
   const { env } = await fixture(context);
   await seedHome(env);
-  for (const args of [[...INIT, '--dry-run'], ['undo', '--dry-run'], ['detect'],
-    ['init', '--assistants', 'opencode,copilot,cursor', '--dry-run']]) {
+  for (const args of [[...INIT, '--no-interactive'], ['undo', '--no-interactive'], ['detect'],
+    ['init', '--assistants', 'opencode,copilot,cursor', '--no-interactive']]) {
     const result = cli(args, { ...env, COLUMNS: '44' });
     assert.equal(result.status, 0, result.stderr);
     for (const line of result.stdout.split('\n')) {
@@ -750,7 +773,7 @@ test('the closing block shows what each run command expands to, and when undo is
   assert.match(applied.stdout, at(/^If you want to undo the changes, run apex undo$/));
 
   // A preview wrote nothing, so promising an undo would be wrong.
-  const preview = cli([...INIT, '--dry-run'], env);
+  const preview = cli([...INIT, '--no-interactive'], env);
   assert.ok(!/If you want to undo/.test(preview.stdout), preview.stdout);
   // Manual-only setups get the guide without a run list they cannot use.
   const manual = cli(['init', '--assistants', 'cursor', '--apply'], env);

@@ -3,11 +3,9 @@ import { diffValues, unifiedDiff } from './diff.js';
 import { interactive } from './tty.js';
 import { shortPath } from './paths.js';
 
-// Order matters: an explicit --apply outranks a non-interactive run, which only removes the
-// prompt. --dry-run outranks everything because it must never touch files.
-export function resolveMode({ dryRun, apply, nonInteractive }) {
-  if (dryRun && apply) throw new Error('--dry-run and --apply cannot be combined.');
-  if (dryRun) return 'preview';
+// --apply is the only thing that writes. A non-interactive run just drops the prompt, it does not
+// drop the preview.
+export function resolveMode({ apply, nonInteractive }) {
   if (apply) return 'apply';
   return nonInteractive || !interactive() ? 'preview' : 'prompt';
 }

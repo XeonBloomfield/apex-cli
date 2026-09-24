@@ -18,10 +18,8 @@ import * as ui from './ui.js';
 const FLAGS = {
   assistants: { type: 'string', usage: '--assistants <ids>', hint: 'assistant ids',
     text: `comma list of: ${IDS.join(', ')} (skips the picker)` },
-  'dry-run': { type: 'boolean', usage: '--dry-run', hint: 'show the plan, write nothing',
-    text: 'show exactly what would change; never touches files' },
   'no-interactive': { type: 'boolean', usage: '--no-interactive', hint: 'never prompt',
-    text: 'no prompts; behaves like --dry-run unless --apply is also given' },
+    text: 'skip the questions and just print the plan' },
   apply: { type: 'boolean', usage: '--apply', hint: 'write without prompting',
     text: 'write changes without prompting (scripts and CI)' },
   'no-diff': { type: 'boolean', usage: '--no-diff', hint: 'list settings instead of the file diff',
@@ -30,19 +28,17 @@ const FLAGS = {
     text: 'print machine-readable output instead of the human UI' },
   list: { type: 'boolean', usage: '--list', hint: 'list recorded setups',
     text: 'show recorded setups instead of reverting one' },
-  yes: { type: 'boolean', short: 'y', usage: '--yes, -y', hint: 'alias for --apply',
-    text: 'alias for --apply, kept for older scripts' },
   help: { type: 'boolean', short: 'h', usage: '--help, -h', hint: 'show help',
     text: 'show all commands' },
 };
 
 const COMMANDS = {
   init: { args: '[--assistants <ids>] [options]', summary: 'configure assistants',
-    flags: ['assistants', 'dry-run', 'no-interactive', 'apply', 'no-diff', 'json', 'yes', 'help'] },
+    flags: ['assistants', 'no-interactive', 'apply', 'no-diff', 'json', 'help'] },
   detect: { args: '[--json]', summary: 'show what Apex CLI can see on this machine',
     flags: ['json', 'help'] },
   undo: { args: '[--list] [options]', summary: 'reverse the most recent Apex CLI setup',
-    flags: ['dry-run', 'no-interactive', 'apply', 'no-diff', 'json', 'list', 'yes', 'help'] },
+    flags: ['no-interactive', 'apply', 'no-diff', 'json', 'list', 'help'] },
   run: { args: `<${RUNNABLE.join('|')}> [-- <args>]`, summary: 'launch an assistant with the gateway set',
     flags: [] },
   completion: { args: '<zsh|bash|fish>', summary: 'print a shell completion script', flags: [] },
@@ -58,53 +54,88 @@ const commandsFor = flag => Object.keys(COMMANDS).filter(name => COMMANDS[name].
 const usageRows = Object.entries(COMMANDS).map(([name, command]) =>
   [`apex ${name}${command.args ? ` ${command.args}` : ''}`, command.summary]);
 // The no-flag default is an option row like any other, so it cannot drift out of the table either.
-const optionRows = [[`(no flags)`, '(init, undo)',
+const optionRows = [['(no flags)', '(init, undo)',
   'interactive: pick assistants, review every change and diff, then confirm'],
   ...Object.entries(FLAGS).map(([name, flag]) => [flag.usage, `(${commandsFor(name).join(', ')})`, flag.text])];
-const installRows = [
-  ['zsh', 'apex completion zsh  > "${fpath[1]}/_apex"', 'rehash or restart the shell'],
-  ['bash', 'apex completion bash >> ~/.bashrc', 'source ~/.bashrc'],
-  ['fish', 'apex completion fish > ~/.config/fish/completions/apex.fish', ''],
+const exampleRows = [
+  ['apex init', 'pick assistants, review, confirm'],
+  ['apex init --assistants codex,pi', 'preview two tools (agent and CI friendly)'],
+  ['apex init --assistants codex,pi --apply', 'write those two without asking'],
+  ['apex undo', 'preview the reversal'],
+  ['apex undo --apply', 'reverse the last setup without asking'],
+  ['apex detect --json', 'machine-readable inventory'],
 ];
-const usageWidth = ui.columnWidth(usageRows.map(([usage]) => usage));
-const optionWidth = ui.columnWidth(optionRows.map(([usage]) => usage));
-const scopeWidth = ui.columnWidth(optionRows.map(([, scope]) => scope));
-const installWidth = ui.columnWidth(installRows.map(([, command]) => command));
+// Names in the left column, values on the right: a wall of four variable names is not a column.
+const environmentRows = [
+  ['CALLSTACK_AUTH_TOKEN', 'your callstack.ai key, needed by apex run and by every assistant you configure'],
+  ['Config directories', 'XDG_CONFIG_HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, PI_CODING_AGENT_DIR'],
+  ['Undo journal', 'APEX_STATE_DIR, XDG_STATE_HOME (default ~/.local/state/apex)'],
+];
+const installRows = [
+  ['zsh', 'apex completion zsh  > "${fpath[1]}/_apex"'],
+  ['bash', 'apex completion bash >> ~/.bashrc'],
+  ['fish', 'apex completion fish > ~/.config/fish/completions/apex.fish'],
+];
 
-const HELP = `Apex CLI: point your coding assistants at ${MODEL}
+const INDENT = '  ';
+// A description with less room than this is unreadable, so it moves to its own line.
+const MIN_TEXT = 24;
 
-Usage
-${usageRows.map(([usage, summary]) => `  ${ui.pad(usage, usageWidth)}${summary}`).join('\n')}
+const helpHeading = text => ui.bold(ui.underline(text));
+const PLAIN = text => text;
+const rowColors = (lead, scope = PLAIN, text = PLAIN) => ({ lead, scope, text });
+// Only real flags are green: `(no flags)` is a description of a case, not something to type.
+const optionColors = rowColors(
+  text => (text.startsWith('--') ? ui.green(text) : ui.dim(text)), ui.dim, PLAIN);
 
-Install completions
-${installRows.map(([shell, command, note]) => `  ${ui.pad(shell, 6)}${note ? ui.pad(command, installWidth) + ui.dim(`(then: ${note})`) : command}`).join('\n')}
+// Three columns: what you type, who accepts it, what it does. Column widths are measured on plain
+// text and colour goes on when a line is emitted.
+function columnRows(rows, color, width) {
+  // A column that eats half the terminal leaves nothing to read, so a lead longer than this moves
+  // its own text below it while the rest of the rows keep the shared column.
+  const leadWidth = Math.min(ui.columnWidth(rows.map(([lead]) => lead)), Math.floor(width / 2) - INDENT.length);
+  // An absent scope column must not leave a gap either: only rows that have one widen it.
+  const scopeWidth = rows.some(([, scope]) => scope) ? ui.columnWidth(rows.map(([, scope]) => scope)) : 0;
+  const textCol = INDENT.length + leadWidth + scopeWidth;
+  const stacked = width - textCol < MIN_TEXT;
+  const lines = [];
+  for (const [lead, scope, text] of rows) {
+    const head = `${INDENT}${ui.pad(color.lead(lead), leadWidth)}${scope ? ui.pad(color.scope(scope), scopeWidth) : ''}`;
+    if (stacked || lead.length + 1 > leadWidth) {
+      const leadLines = ui.wrap(lead, width - INDENT.length);
+      leadLines.forEach((part, index) => lines.push(`${INDENT}${color.lead(part)}${
+        index === leadLines.length - 1 && scope ? ` ${color.scope(scope)}` : ''}`));
+      const below = `${INDENT}    `;
+      for (const line of ui.wrap(text, width - below.length)) lines.push(below + color.text(line));
+      continue;
+    }
+    const [first, ...rest] = ui.wrap(text, width - textCol);
+    lines.push((head + color.text(first)).replace(/\s+$/, ''));
+    for (const line of rest) lines.push(' '.repeat(textCol) + color.text(line));
+  }
+  return lines;
+}
 
-Options
-${optionRows.map(([usage, scope, text]) => `  ${ui.pad(usage, optionWidth)}${ui.pad(scope, scopeWidth)}${text}`).join('\n')}
+// Rendered on demand: the colour and the column widths belong to the terminal that asked.
+function helpText() {
+  const width = ui.width();
+  const section = (title, rows, color) => [helpHeading(title), ...columnRows(rows, color, width), ''];
+  return [
+    ...ui.wrap(`Apex CLI: point your coding assistants at ${MODEL}`, width).map(line => ui.bold(ui.model(line))),
+    '',
+    ...section('Usage', usageRows.map(([lead, text]) => [lead, '', text]), rowColors(ui.green, PLAIN, PLAIN)),
+    ...section('Options', optionRows, optionColors),
+    ...section('Examples', exampleRows.map(([lead, text]) => [lead, '', text]), rowColors(ui.green, PLAIN, ui.dim)),
+    ...section('Environment', environmentRows.map(([lead, text]) => [lead, '', text]), rowColors(ui.yellow, PLAIN, PLAIN)),
+    ...section('Install completions', installRows.map(([lead, text]) => [lead, '', text]), rowColors(ui.green, PLAIN, PLAIN)),
+    ...ui.wrap('Restart the shell afterwards, or rehash zsh and re-source your bashrc.', width - INDENT.length)
+      .map(line => `${INDENT}${ui.dim(line)}`),
+    '',
+    ...ui.wrap('Node.js 22+ required. Codex profiles target 0.134.0+', width).map(line => ui.dim(line)),
+  ].join('\n');
+}
 
-Safety: Apex CLI never disrupts an existing setup
-  * Nothing is written unless you confirm, or pass --apply. The default is a preview.
-  * Every existing file is copied to a sibling .apex-backup-<id> (mode 0600) before it changes.
-  * Comments, unknown keys and your current default model are preserved.
-  * Your API key is never written, stored or validated: export CALLSTACK_AUTH_TOKEN yourself.
-  * Malformed, conflicting or symlinked configuration is refused instead of overwritten.
-  * apex undo reverts only what Apex CLI wrote, and only while nothing else touched those files.
-
-Environment
-  CALLSTACK_AUTH_TOKEN   required by apex run and by every configured assistant
-  XDG_CONFIG_HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, PI_CODING_AGENT_DIR   assistant config locations
-  APEX_STATE_DIR, XDG_STATE_HOME   where the undo journal lives (default ~/.local/state/apex)
-
-Examples
-  apex init                                          pick, review and confirm
-  apex init --dry-run                                preview everything, write nothing
-  apex init --assistants codex,pi --no-interactive   preview two tools (agent/CI friendly)
-  apex init --assistants codex,pi --apply            actually write those two
-  apex undo --dry-run                                preview the reversal
-  apex detect --json                                 machine-readable inventory
-
-Exit codes: 0 success, nothing to do, or you declined; 1 error or configuration Apex CLI refuses to touch.
-Node.js 22+ required. Codex profiles target 0.134.0+`;
+const printHelp = () => console.log(helpText());
 
 function readFlags(rest, command) {
   const { values } = parseArgs({ args: rest, options: OPTIONS, allowPositionals: false });
@@ -121,8 +152,7 @@ function readFlags(rest, command) {
     help: Boolean(values.help),
     list: Boolean(values.list),
     mode: resolveMode({
-      dryRun: Boolean(values['dry-run']),
-      apply: Boolean(values.apply || values.yes),
+      apply: Boolean(values.apply),
       nonInteractive: Boolean(values['no-interactive'] || json),
     }),
   };
@@ -184,7 +214,7 @@ function pickerOptions(entries) {
 
 async function commandInit(rest) {
   const flags = readFlags(rest, 'init');
-  if (flags.help) { console.log(ui.model(HELP)); return; }
+  if (flags.help) { printHelp(); return; }
   const secret = token();
   // The machine payload carries values, not diffs, so do not pay for a diff nobody reads.
   const options = { secret, showDiff: flags.showDiff && !flags.json };
@@ -303,7 +333,7 @@ async function commandInit(rest) {
 
 async function commandDetect(rest) {
   const flags = readFlags(rest, 'detect');
-  if (flags.help) { console.log(ui.model(HELP)); return; }
+  if (flags.help) { printHelp(); return; }
   const secret = token();
   const entries = await planAll(await detect(), { secret, showDiff: false });
   if (flags.json) {
@@ -337,7 +367,7 @@ async function commandDetect(rest) {
 
 async function commandUndo(rest) {
   const flags = readFlags(rest, 'undo');
-  if (flags.help) { console.log(ui.model(HELP)); return; }
+  if (flags.help) { printHelp(); return; }
   const secret = token();
   const options = { secret, showDiff: flags.showDiff && !flags.json };
   const journalFile = journalPath();
@@ -528,7 +558,7 @@ function commandCompletion(rest) {
 
 async function main(argv) {
   const [command, ...rest] = argv;
-  if (!command || ['--help', '-h', 'help'].includes(command)) { console.log(ui.model(HELP)); return; }
+  if (!command || ['--help', '-h', 'help'].includes(command)) { printHelp(); return; }
   if (['--version', '-v'].includes(command)) {
     console.log(JSON.parse(await readFile(new URL('../package.json', import.meta.url))).version);
     return;

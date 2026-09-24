@@ -13,6 +13,7 @@ const magenta = text => styleText('magenta', text);
 const gray = text => styleText('gray', text);
 const dim = text => styleText('dim', text);
 const bold = text => styleText('bold', text);
+const underline = text => styleText('underline', text);
 const link = text => styleText(['blue', 'underline'], text);
 
 if (!interactive()) p.settings.withGuide = false;
@@ -73,7 +74,12 @@ const STATUS = {
 // Two columns may never touch: a column is its longest value plus a gap, and `pad` refuses to
 // shrink below that, so no label can glue itself to the next column however long it is.
 export const columnWidth = (values, gap = 2) => Math.max(...values.map(value => visible(String(value)).length), 0) + gap;
-export const pad = (text, column) => String(text).padEnd(Math.max(visible(String(text)).length + 1, column));
+export const pad = (text, column) => {
+  const value = String(text);
+  // padEnd would count the escape codes as content, so a coloured label silently steals the gap
+  // from the next column.
+  return value + ' '.repeat(Math.max(1, column - visible(value).length));
+};
 
 // The model id is the one string worth colouring everywhere it appears. Green alone is enough: its
 // reset (39) clears the colour but leaves the caller's bold or dim (22) running. Occurrences inside
@@ -240,4 +246,5 @@ export async function confirmApply(question, hint) {
   return answer;
 }
 
-export { green, red, yellow, magenta, gray, dim, bold, link };
+export { green, red, yellow, magenta, gray, dim, bold, underline, link };
+export { wrap };
