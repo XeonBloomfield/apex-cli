@@ -5,7 +5,7 @@ export const REDACTED = '<redacted>';
 // so a short CALLSTACK_AUTH_TOKEN is matched only where a key says it is a secret.
 const MIN_TOKEN = 12;
 
-export const containsSecret = (text, secret) =>
+const containsSecret = (text, secret) =>
   typeof text === 'string' && typeof secret === 'string' && secret.length >= MIN_TOKEN && text.includes(secret);
 
 // Plural forms are included: over-redacting a display value is cheap, leaking one is not.
@@ -32,8 +32,9 @@ const LITERAL = /^(?:true|false|null|-?\d+(?:\.\d+)?)$/;
 const unquote = text => text.replace(/^["']|["']$/g, '');
 
 // A value is a quoted scalar, a bare scalar, or a bracketed list; braces end a match instead of
-// being consumed, so pairs nested inside an inline object are found by this same scan.
-const SECRET_PAIR = /("(?:[^"\n]*)"|'[^'\n]+'|[A-Za-z0-9_.-]+)(\s*[:=]\s*)("(?:[^"\\\n]*)"|'(?:[^'\\\n]*)'|\[[^\]\n]*\]|[^,}\]\n{\[]+)/g;
+// being consumed, so pairs nested inside an inline object are found by this same scan. A list may
+// span lines, which is why callers redact a whole file rather than one line at a time.
+const SECRET_PAIR = /("(?:[^"\n]*)"|'[^'\n]+'|[A-Za-z0-9_.-]+)(\s*[:=]\s*)("(?:[^"\\\n]*)"|'(?:[^'\\\n]*)'|\[[^\]]*\]|[^\s,}\]{\[][^,}\]\n{\[]*)/g;
 
 // A list keeps its shape with each member redacted, so `"apiKeys": ["sk-1"]` stays readable JSON.
 const QUOTED = /"(?:[^"\\\n]*)"|'[^'\\\n]*'/g;
@@ -44,8 +45,10 @@ function redactPair(key, value) {
 }
 
 export function redactText(text, secret) {
-  const redacted = text.replace(SECRET_PAIR, (whole, key, separator, value) =>
-    redactPair(key, value) === null ? whole : `${key}${separator}${redactPair(key, value)}`);
+  const redacted = text.replace(SECRET_PAIR, (whole, key, separator, value) => {
+    const masked = redactPair(key, value);
+    return masked === null ? whole : `${key}${separator}${masked}`;
+  });
   return containsSecret(redacted, secret) ? redacted.replaceAll(secret, REDACTED) : redacted;
 }
 

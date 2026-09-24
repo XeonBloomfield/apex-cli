@@ -223,12 +223,14 @@ async function commandInit(rest) {
   // The machine payload carries values, not diffs, so do not pay for a diff nobody reads.
   const options = { secret, showDiff: flags.showDiff && !flags.json };
   const journalFile = journalPath();
+  // Each write is journaled right after it lands, so an unreadable journal must stop init before
+  // the first write rather than leave a file behind that undo cannot reach.
+  if (flags.mode !== 'preview') await readJournal(journalFile);
   const batch = randomUUID();
   const entries = await planAll(await detect(), options);
   let ids = flags.selected ?? entries.filter(entry => entry.detected).map(entry => entry.id);
-  if (flags.json) {
-    // Machine callers pick with --assistants and never get a prompt.
-  } else {
+  // Machine callers pick with --assistants and never get a prompt.
+  if (!flags.json) {
     ui.intro('Apex CLI · Configure callstack/Apex for your favorite harness', MODE_NOTE[flags.mode]);
     if (flags.mode === 'prompt' && !flags.selected) {
       const defaults = entries.filter(entry => entry.detected && !entry.manual && !entry.error && pendingOf(entry).length)
@@ -294,8 +296,9 @@ async function commandInit(rest) {
     process.exitCode = 1;
     return;
   }
+  let applied = 0;
   if (active.length) {
-    await runWrites({
+    const result = await runWrites({
       title: 'Planned changes',
       files,
       options,
@@ -308,6 +311,9 @@ async function commandInit(rest) {
         return `${ui.bold(shortPath(change.path))} ${ui.dim(backup ? `backup: ${basename(backup)}` : 'created')}`;
       },
     });
+    // Declining is the end of the run, just like cancelling the picker.
+    if (result.declined) return;
+    applied = result.applied;
   }
   // Steps for the assistants Apex CLI will not touch come after the diff, which is the part
   // people are reviewing.
@@ -330,8 +336,8 @@ async function commandInit(rest) {
     '',
     `...or pick "${MODEL}" from the UI when setting up manually.`,
     `For more instructions, visit: ${ui.link(GUIDE_URL)}`,
-    // A preview wrote nothing, so there is nothing to take back yet.
-    ...(flags.mode === 'preview' ? [] : ['', `If you want to undo the changes, run ${ui.bold('apex undo')}`]),
+    // Only a run that wrote something has anything to take back.
+    ...(applied ? ['', `If you want to undo the changes, run ${ui.bold('apex undo')}`] : []),
   ]);
 }
 
@@ -377,6 +383,10 @@ async function commandUndo(rest) {
   const journalFile = journalPath();
   const entries = await readJournal(journalFile);
   if (flags.list) {
+    if (flags.json) {
+      console.log(JSON.stringify({ command: 'undo', journal: journalFile, entries }, null, 2));
+      return;
+    }
     const batches = [...new Set(entries.map(entry => entry.batch))];
     ui.intro('Apex CLI · Setup history', 'Only the journal is read here; configs stay untouched.');
     for (const batch of batches) {
@@ -443,7 +453,7 @@ async function commandUndo(rest) {
   if (skipped.length) ui.plain('');
   for (const item of skipped) ui.warn(`${ui.bold(shortPath(item.entry.path))} stays as it is: ${shortPath(item.reason)}`);
   if (!restorable.length) {
-    ui.outro('No file in the most recent setup can be restored safely. Nothing was written.');
+    ui.outro('No file Apex CLI wrote can be restored safely. Nothing was written.');
     return;
   }
   const result = await runWrites({
@@ -502,12 +512,13 @@ function completionScript(shell) {
   if (shell === 'zsh') {
     return `#compdef apex
 _apex() {
-  local -a commands assistants${taking.length ? ' ' : ''}${words(taking.map(name => `${name}_flags`))}
+  local -a commands assistants runnable${taking.length ? ' ' : ''}${words(taking.map(name => `${name}_flags`))}
   commands=(${words([
       ...Object.entries(COMMANDS).map(([name, command]) => `'${name}:${command.summary}'`),
       ...GLOBALS.map(([flag, text]) => `'${flag}:${text}'`),
     ])})
   assistants=(${words(IDS)})
+  runnable=(${words(RUNNABLE)})
 ${taking.map(name => `  ${name}_flags=(${words(completionsFor(name).flatMap(entry =>
     spellings(entry).map(word => `'${word}:${entry.hint}'`)))})`).join('\n')}
   if (( CURRENT == 2 )); then
@@ -517,26 +528,27 @@ ${taking.map(name => `  ${name}_flags=(${words(completionsFor(name).flatMap(entr
   else
     case "\${words[2]}" in
 ${taking.map(name => `      ${name}) _describe -t flags 'option' ${name}_flags ;;`).join('\n')}
-      run) _describe -t assistants 'assistant' assistants ;;
+      run) (( CURRENT == 3 )) && _describe -t assistants 'assistant' runnable ;;
       completion) _describe -t shells 'shell' '(${words(SHELLS)})' ;;
     esac
   fi
 }
-compdef _apex apex
+# Autoloaded from $fpath, this file body is the first completion call, so it must complete too.
+if [[ "\${funcstack[1]}" == _apex ]]; then _apex "$@"; else compdef _apex apex; fi
 `;
   }
   if (shell === 'bash') {
     return `_apex_completions() {
-  local sub="\${COMP_WORDS[2]}" prev="\${COMP_WORDS[COMP_CWORD - 1]}" current="\${COMP_WORDS[COMP_CWORD]}"
-  local assistants="${words(IDS)}"
-  if [[ "$prev" == --assistants ]]; then COMPREPLY=( $(compgen -W "$assistants" -- "$current") ); return; fi
-  case "$COMP_CWORD" in
-    1) COMPREPLY=( $(compgen -W "${words([...Object.keys(COMMANDS), ...GLOBALS.map(([flag]) => flag)])}" -- "$current") ) ;;
-    2) case "$sub" in
-${taking.map(name => `         ${name}) COMPREPLY=( $(compgen -W "${words(completionsFor(name).flatMap(spellings))}" -- "$current") ) ;;`).join('\n')}
-         run) COMPREPLY=( $(compgen -W "$assistants" -- "$current") ) ;;
-         completion) COMPREPLY=( $(compgen -W "${words(SHELLS)}" -- "$current") ) ;;
-       esac ;;
+  local sub="\${COMP_WORDS[1]}" prev="\${COMP_WORDS[COMP_CWORD - 1]}" current="\${COMP_WORDS[COMP_CWORD]}"
+  if [[ "$prev" == --assistants ]]; then COMPREPLY=( $(compgen -W "${words(IDS)}" -- "$current") ); return; fi
+  if (( COMP_CWORD == 1 )); then
+    COMPREPLY=( $(compgen -W "${words([...Object.keys(COMMANDS), ...GLOBALS.map(([flag]) => flag)])}" -- "$current") )
+    return
+  fi
+  case "$sub" in
+${taking.map(name => `    ${name}) COMPREPLY=( $(compgen -W "${words(completionsFor(name).flatMap(spellings))}" -- "$current") ) ;;`).join('\n')}
+    run) (( COMP_CWORD == 2 )) && COMPREPLY=( $(compgen -W "${words(RUNNABLE)}" -- "$current") ) ;;
+    completion) (( COMP_CWORD == 2 )) && COMPREPLY=( $(compgen -W "${words(SHELLS)}" -- "$current") ) ;;
   esac
 }
 complete -F _apex_completions apex
@@ -549,7 +561,7 @@ complete -F _apex_completions apex
     ...Object.entries(COMMANDS).map(([name, command]) => `complete -c apex -f -n "__fish_use_subcommand" -a ${name} -d '${command.summary}'`),
     ...GLOBALS.map(([flag, hint]) => `complete -c apex -f -n "__fish_use_subcommand" -l ${flag.slice(2)} -d '${hint}'`),
     ...taking.flatMap(name => completionsFor(name).map(entry => fish(`__fish_seen_subcommand_from ${name}`, entry))),
-    ...IDS.map(id => `complete -c apex -f -n "__fish_seen_subcommand_from run" -a ${id} -d 'assistant'`),
+    ...RUNNABLE.map(id => `complete -c apex -f -n "__fish_seen_subcommand_from run" -a ${id} -d 'assistant'`),
     ...SHELLS.map(name => `complete -c apex -f -n "__fish_seen_subcommand_from completion" -a ${name} -d 'shell'`),
   ].join('\n') + '\n';
 }

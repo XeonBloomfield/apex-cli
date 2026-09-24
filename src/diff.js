@@ -54,7 +54,8 @@ function toLines(text) {
 }
 
 // Longest-common-subsequence diff: keeps hunks to the lines that really moved,
-// so inserting one key never renders the whole file as changed.
+// so inserting one key never renders the whole file as changed. Each op points at its line: new
+// lines for `+`, old lines otherwise.
 function align(oldLines, newLines) {
   if (oldLines.length * newLines.length > 250_000) return null;
   const rows = Array.from({ length: oldLines.length + 1 }, () => new Uint32Array(newLines.length + 1));
@@ -69,12 +70,12 @@ function align(oldLines, newLines) {
   let i = 0;
   let j = 0;
   while (i < oldLines.length && j < newLines.length) {
-    if (oldLines[i] === newLines[j]) { ops.push([' ', oldLines[i]]); i += 1; j += 1; }
-    else if (rows[i + 1][j] >= rows[i][j + 1]) { ops.push(['-', oldLines[i]]); i += 1; }
-    else { ops.push(['+', newLines[j]]); j += 1; }
+    if (oldLines[i] === newLines[j]) { ops.push([' ', i]); i += 1; j += 1; }
+    else if (rows[i + 1][j] >= rows[i][j + 1]) { ops.push(['-', i]); i += 1; }
+    else { ops.push(['+', j]); j += 1; }
   }
-  while (i < oldLines.length) ops.push(['-', oldLines[i++]]);
-  while (j < newLines.length) ops.push(['+', newLines[j++]]);
+  while (i < oldLines.length) ops.push(['-', i++]);
+  while (j < newLines.length) ops.push(['+', j++]);
   return ops;
 }
 
@@ -84,7 +85,7 @@ export function unifiedDiff(path, before, after, secret) {
   // Configs are tens of lines; if one ever outgrew the exact diff, replacing the whole file is
   // coarse but honest, where an approximate alignment would invent lines that did not move.
   const ops = align(oldLines, newLines)
-    ?? [...oldLines.map(line => ['-', line]), ...newLines.map(line => ['+', line])];
+    ?? [...oldLines.map((_, index) => ['-', index]), ...newLines.map((_, index) => ['+', index])];
   if (ops.every(([mark]) => mark === ' ')) return [];
 
   const CONTEXT = 3;
@@ -101,8 +102,11 @@ export function unifiedDiff(path, before, after, secret) {
     prefix.push({ old: prev.old + (mark !== '+'), new: prev.new + (mark !== '-') });
   }
   // Only file contents are redacted: path headers and @@ ranges carry no credential, and masking
-  // them would mangle the very paths the diff is showing.
-  const body = ops.map(([mark, line]) => `${mark}${redactText(line, secret)}`);
+  // them would mangle the very paths the diff is showing. Each side is redacted whole, so a secret
+  // list spread over several lines is caught, and redaction never adds or removes a line.
+  const shown = text => toLines(text === null ? null : redactText(text, secret));
+  const [oldShown, newShown] = [shown(before), shown(after)];
+  const body = ops.map(([mark, index]) => `${mark}${(mark === '+' ? newShown : oldShown)[index]}`);
   const lines = [`--- ${before === null ? '/dev/null' : path}`, `+++ ${after === null ? '/dev/null' : path}`];
   for (const hunk of hunks) {
     const from = Math.max(0, hunk.start - CONTEXT);

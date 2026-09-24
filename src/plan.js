@@ -11,7 +11,7 @@ export function resolveMode({ apply, nonInteractive }) {
 }
 
 export const MODE_NOTE = {
-  preview: 'Preview only. Pass --apply to write, or run this in a terminal to confirm.',
+  preview: 'Preview only. Pass --apply to write.',
   apply: 'Writing now (--apply).',
   prompt: 'Nothing is written until you confirm.',
 };
@@ -40,7 +40,7 @@ export async function runWrites({ title, files, options, mode, prompt, hint, pen
     ui.outro('Already configured. Nothing to write.');
     return { applied: 0 };
   }
-  if (mode === 'prompt' && !await ui.confirmApply(prompt, hint)) return { applied: 0 };
+  if (mode === 'prompt' && !await ui.confirmApply(prompt, hint)) return { applied: 0, declined: true };
   // The plan above and the saved files below are two different claims, so they get a line of air.
   ui.plain('');
   let applied = 0;

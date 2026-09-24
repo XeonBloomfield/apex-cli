@@ -41,12 +41,13 @@ function pieces(text, limit) {
 function wrap(text, limit) {
   if (visible(text).length <= limit) return [text];
   const lines = [];
-  let line = '';
+  // `null` rather than '' marks an empty line, so the pieces of a leading indent are kept.
+  let line = null;
   for (const word of pieces(text, limit)) {
-    if (line && visible(`${line} ${word}`).length > limit) { lines.push(line); line = word; }
-    else line = line ? `${line} ${word}` : word;
+    if (line !== null && visible(`${line} ${word}`).length > limit) { lines.push(line); line = word; }
+    else line = line === null ? word : `${line} ${word}`;
   }
-  if (line) lines.push(line);
+  if (line !== null) lines.push(line);
   return lines;
 }
 
@@ -109,7 +110,6 @@ function changeLines(changes, secret, limit) {
     const op = OP[change.op];
     const key = change.key.length > keyWidth ? `${change.key.slice(0, keyWidth - 1)}…` : change.key;
     const prefix = `${op.color(op.mark)} ${dim(model(pad(key, keyWidth)))}`;
-    const padding = ' '.repeat(keyWidth);
     if (change.op === 'replace') {
       const from = displayValue(change.key, change.oldValue, secret);
       const to = displayValue(change.key, change.value, secret);
@@ -126,7 +126,7 @@ function changeLines(changes, secret, limit) {
 
 const DIFF_MARKS = ['+', '-', '@'];
 
-export function fileBlock(file, { secret, maxChanges = 12 }) {
+function fileBlock(file, { secret, maxChanges = 12 }) {
   const status = STATUS[file.status];
   const limit = width() - GUTTER.length;
   const path = clip(shortPath(file.path), limit - STATUS_COLUMN);
@@ -153,7 +153,7 @@ export function fileBlock(file, { secret, maxChanges = 12 }) {
 // a block, `bullet` owns hanging continuation, and `box` draws the one bordered element. The rule
 // for callers is that a heading fills its own gap, so nothing blanks a line before a heading;
 // separators between a heading's own rows stay explicit at the call site.
-export const SECTION_GAP = 2;
+const SECTION_GAP = 2;
 
 const write = text => process.stdout.write(`${text}\n`);
 
@@ -166,7 +166,7 @@ export function prose(text) {
   for (const line of wrap(text, width() - GUTTER.length)) plain(line);
 }
 
-export function heading(text, gap = SECTION_GAP) {
+function heading(text, gap = SECTION_GAP) {
   for (let index = 0; index < gap; index += 1) write('');
   for (const line of wrap(text, width() - GUTTER.length)) plain(bold(model(line)));
 }
@@ -246,5 +246,5 @@ export async function confirmApply(question, hint) {
   return answer;
 }
 
-export { green, red, yellow, magenta, gray, dim, bold, underline, link };
+export { green, yellow, gray, dim, bold, underline, link };
 export { wrap };

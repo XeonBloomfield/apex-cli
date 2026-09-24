@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { parse, modify, applyEdits } from 'jsonc-parser';
 import { parse as parseToml, stringify } from 'smol-toml';
 
-export async function assertSafePath(path) {
+async function assertSafePath(path) {
   let current = parsePath(resolve(path)).root;
   for (const part of resolve(path).slice(current.length).split(/[\\/]/).filter(Boolean)) {
     current = join(current, part);

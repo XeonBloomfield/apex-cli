@@ -31,7 +31,7 @@ export async function readJournal(path) {
   return entries;
 }
 
-export async function writeJournal(path, entries) {
+async function writeJournal(path, entries) {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const seen = [];
   for (const entry of entries) if (!seen.includes(entry.batch)) seen.push(entry.batch);
@@ -78,43 +78,40 @@ export async function appendEntry(journalFile, entry) {
   await writeJournal(journalFile, entries);
 }
 
-export function latestBatch(entries) {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const { batch, at } = entries[index];
-    const items = entries.filter(entry => entry.batch === batch && !entry.undoneAt);
-    if (items.length) return { batch, at, items };
-  }
-  return null;
+// Newest first, and only the files each setup still has to take back.
+function pendingBatches(entries) {
+  const batches = [...new Set(entries.map(entry => entry.batch))].reverse();
+  return batches
+    .map(batch => ({ batch, at: entries.findLast(entry => entry.batch === batch).at,
+      items: entries.filter(entry => entry.batch === batch && !entry.undoneAt) }))
+    .filter(batch => batch.items.length);
 }
 
-export async function planUndo(entries) {
-  const batch = latestBatch(entries);
-  if (!batch) return null;
-  const planned = [];
-  for (const entry of batch.items) {
-    const current = await readConfig(entry.path);
-    if (current === null) {
-      planned.push({ entry, action: 'skip', reason: 'file no longer exists' });
-      continue;
-    }
-    if (sha256(current) !== entry.afterSha) {
-      planned.push({ entry, action: 'skip', reason: `changed by something else since Apex CLI wrote it${entry.backup ? `. Restore ${entry.backup} manually` : ''}` });
-      continue;
-    }
-    if (entry.created) {
-      planned.push({ entry, action: 'remove', current, change: { path: entry.path, before: current, after: null, format: entry.format ?? 'json' } });
-      continue;
-    }
-    if (entry.backup === null) {
-      planned.push({ entry, action: 'skip', reason: 'original backup was never recorded for this file' });
-      continue;
-    }
-    const stored = await readConfig(entry.backup);
-    if (stored === null || sha256(stored) !== entry.beforeSha) {
-      planned.push({ entry, action: 'skip', reason: `original backup is missing (${entry.backup})` });
-      continue;
-    }
-    planned.push({ entry, action: 'restore', current, change: { path: entry.path, before: current, after: stored, format: entry.format ?? 'json' } });
+async function planEntry(entry) {
+  const current = await readConfig(entry.path);
+  if (current === null) return { entry, action: 'skip', reason: 'file no longer exists' };
+  if (sha256(current) !== entry.afterSha) {
+    return { entry, action: 'skip', reason: `changed by something else since Apex CLI wrote it${entry.backup ? `. Restore ${entry.backup} manually` : ''}` };
   }
-  return { ...batch, planned };
+  const format = entry.format ?? 'json';
+  if (entry.created) return { entry, action: 'remove', current, change: { path: entry.path, before: current, after: null, format } };
+  if (entry.backup === null) return { entry, action: 'skip', reason: 'original backup was never recorded for this file' };
+  const stored = await readConfig(entry.backup);
+  if (stored === null || sha256(stored) !== entry.beforeSha) {
+    return { entry, action: 'skip', reason: `original backup is missing (${entry.backup})` };
+  }
+  return { entry, action: 'restore', current, change: { path: entry.path, before: current, after: stored, format } };
+}
+
+// The newest setup with something left to restore. A setup whose remaining files can only be
+// skipped would otherwise block every older one forever; reaching past it is safe because each
+// restore still checks the file is exactly what Apex CLI wrote.
+export async function planUndo(entries) {
+  let newest = null;
+  for (const batch of pendingBatches(entries)) {
+    const plan = { ...batch, planned: await Promise.all(batch.items.map(planEntry)) };
+    if (plan.planned.some(item => item.action !== 'skip')) return plan;
+    newest ??= plan;
+  }
+  return newest;
 }

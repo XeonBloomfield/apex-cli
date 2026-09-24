@@ -10,6 +10,7 @@ import { addToml, editJson, parseJson, readConfig, sha256, writeChange } from '.
 import { diffValues, unifiedDiff } from '../src/diff.js';
 import { isSecretKey, redactText } from '../src/secrets.js';
 import { journalPath, markUndone } from '../src/journal.js';
+import { wrap } from '../src/ui.js';
 
 const BIN = resolve('bin/apex.js');
 
@@ -402,6 +403,40 @@ test('undo restores edited files byte for byte and deletes created files', async
   assert.ok(marked.every(entry => typeof entry.undoneAt === 'string'), 'every entry is marked undone');
 });
 
+test('a setup whose files can only be skipped does not block older ones', async context => {
+  const { env } = await fixture(context);
+  assert.equal(cli(['init', '--assistants', 'codex', '--apply'], env).status, 0);
+  assert.equal(cli(['init', '--assistants', 'pi', '--apply'], env).status, 0);
+  const pi = configPath(env, 'pi');
+  await writeFile(pi, '{}\n');
+  const undone = cli(['undo', '--apply'], env);
+  assert.equal(undone.status, 0, undone.stderr);
+  assert.equal(await exists(configPath(env, 'codex')), false, 'the older setup is undone');
+  assert.equal(await readFile(pi, 'utf8'), '{}\n', 'the edited file stays as it is');
+});
+
+test('undo --list --json prints the journal as JSON', async context => {
+  const { env, journal } = await fixture(context);
+  assert.equal(cli(['init', '--assistants', 'codex', '--apply'], env).status, 0);
+  const listed = JSON.parse(cli(['undo', '--list', '--json'], env).stdout);
+  assert.equal(listed.journal, journal);
+  assert.deepEqual(listed.entries.map(entry => entry.path), [configPath(env, 'codex')]);
+});
+
+test('an unreadable journal stops init before anything is written', async context => {
+  const { env, journal } = await fixture(context);
+  await mkdir(dirname(journal), { recursive: true });
+  await writeFile(journal, '{bad');
+  for (const args of [['init', '--assistants', 'codex', '--apply'], ['init', '--assistants', 'codex', '--apply', '--json']]) {
+    const result = cli(args, env);
+    assert.equal(result.status, 1, args.join(' '));
+    assert.match(result.stderr, /journal is not valid JSON/);
+  }
+  assert.equal(await exists(configPath(env, 'codex')), false);
+  // A preview writes nothing, so it does not need the journal.
+  assert.equal(cli(['init', '--assistants', 'codex', '--no-interactive'], env).status, 0);
+});
+
 test('undo leaves files that changed elsewhere untouched and explains why', async context => {
   const { env } = await fixture(context);
   await seedHome(env);
@@ -574,10 +609,17 @@ test('diffs are symmetric: a created file comes from /dev/null and a deleted one
   assert.ok(!deleted.slice(3).some(line => line.startsWith(' ')), deleted.join('\n'));
 });
 
+test('a folded line keeps its leading indent', () => {
+  assert.deepEqual(wrap('     "model": "callstack/Apex"', 20), ['     "model":', '"callstack/Apex"']);
+});
+
 test('redaction reaches nested values and leaves short tokens and headers alone', () => {
   assert.match(redactText('{"config": {"api_key": "sk-leak-123456"}}'), /"api_key": <redacted>/);
   assert.match(redactText('providers = { callstack = { client_secret = "leak-me-please" } }'),
     /client_secret = <redacted>/);
+  // A list spread over several lines names its key only once, above the members.
+  const listed = unifiedDiff('x.json', null, '{\n  "apiKeys": [\n    "sk-live-abcdef",\n    "sk-2"\n  ]\n}\n');
+  assert.deepEqual(listed.slice(3), ['+{', '+  "apiKeys": [', '+    <redacted>,', '+    <redacted>', '+  ]', '+}']);
   // A one-character token is indistinguishable from ordinary text, so it must not be swept.
   const url = 'base_url = "https://api.callstack.ai/v1"';
   assert.equal(redactText(url, 'a'), url);
@@ -688,7 +730,7 @@ test('completions offer each flag only for the commands that accept it', () => {
 
   const zsh = script('zsh');
   // Per-command arrays are declared as locals, so completing leaks nothing into the user's shell.
-  assert.match(zsh, /^ {2}local -a commands assistants init_flags detect_flags undo_flags$/m);
+  assert.match(zsh, /^ {2}local -a commands assistants runnable init_flags detect_flags undo_flags$/m);
   const zshFlags = name => lineWith(zsh, `${name}_flags=`);
   assert.match(zshFlags('detect'), /--json/);
   assert.ok(!zshFlags('detect').includes('--assistants'), zshFlags('detect'));
@@ -701,9 +743,29 @@ test('completions offer each flag only for the commands that accept it', () => {
   assert.ok(fishFlags('undo').some(each => each.includes('-l list')), fishFlags('undo').join('\n'));
   assert.ok(!fishFlags('detect').some(each => each.includes('assistants')), fishFlags('detect').join('\n'));
   assert.match(fish, /-l assistants -a "opencode codex claude pi cursor copilot"/);
+  assert.ok(!fishFlags('run').some(each => each.includes('cursor')), 'run offers only what it can launch');
   assert.match(fish, /-l apply -d 'write without prompting'/);
   for (const each of fish.split('\n')) assert.equal((each.match(/'/g) || []).length % 2, 0, each);
   assert.ok(lineWith(fish, '-l version'), 'global flags are completed too');
+});
+
+test('bash completes commands, per-command flags and run targets', { skip: spawnSync('bash', ['-c', 'true']).status !== 0 }, () => {
+  const script = cli(['completion', 'bash'], process.env).stdout;
+  const complete = line => {
+    const probe = `${script}\nread -ra COMP_WORDS <<< "${line}"; COMP_WORDS+=("")
+COMP_CWORD=$((\${#COMP_WORDS[@]} - 1)); _apex_completions; echo "\${COMPREPLY[*]}"`;
+    return spawnSync('bash', ['-c', probe], { encoding: 'utf8' }).stdout.trim();
+  };
+  assert.match(complete('apex'), /^init detect undo /);
+  assert.match(complete('apex undo'), /--list/);
+  assert.match(complete('apex init --apply'), /--assistants/, 'flags complete after other flags too');
+  assert.equal(complete('apex run'), 'codex claude opencode pi');
+  assert.equal(complete('apex init --assistants'), 'opencode codex claude pi cursor copilot');
+});
+
+test('zsh completes on the very first call after autoloading', () => {
+  const zsh = cli(['completion', 'zsh'], process.env).stdout;
+  assert.match(zsh, /^if \[\[ "\$\{funcstack\[1\]\}" == _apex \]\]; then _apex "\$@"; else compdef _apex apex; fi$/m);
 });
 
 test('a batch that fails halfway is reported the same way by init and undo', async context => {
@@ -778,9 +840,11 @@ test('the closing block shows what each run command expands to, and when undo is
   assert.match(applied.stdout, at(/^https:\/\/app\.notion\.com\/p\/callstack\/Apex-how-to-use-it-/));
   assert.match(applied.stdout, at(/^If you want to undo the changes, run apex undo$/));
 
-  // A preview wrote nothing, so promising an undo would be wrong.
+  // A preview wrote nothing, so promising an undo would be wrong. Neither did a repeat run.
   const preview = cli([...INIT, '--no-interactive'], env);
   assert.ok(!/If you want to undo/.test(preview.stdout), preview.stdout);
+  const repeated = cli([...INIT, '--apply'], env);
+  assert.ok(!/If you want to undo/.test(repeated.stdout), repeated.stdout);
   // Manual-only setups get the guide without a run list they cannot use.
   const manual = cli(['init', '--assistants', 'cursor', '--apply'], env);
   assert.match(manual.stdout, at(/^Use callstack\/Apex with your assistant:$/));

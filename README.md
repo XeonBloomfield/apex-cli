@@ -37,7 +37,7 @@ step or install scripts are needed on your machine.
 | `apex init --no-interactive` | Prints the plan without asking questions | No |
 | `apex init --apply` | Writes the planned changes without asking | Yes |
 | `apex undo` | Reverts the most recent Apex CLI setup, with the same preview and confirmation | Only after you confirm |
-| `apex undo --list` | Shows recorded setups and which are already undone | No |
+| `apex undo --list` | Shows recorded setups and which are already undone (`--json` prints the journal) | No |
 | `apex run <assistant> [-- <args>]` | Launches the assistant with the gateway, model and credentials in the child environment | No |
 | `apex completion <zsh\|bash\|fish>` | Prints a shell completion script generated from the live command and flag tables | No |
 
@@ -153,7 +153,9 @@ diffs to `/dev/null`. `--no-diff` swaps the diff for one `+ key  value` row per 
 
 `apex undo` re-applies the inverse of the last setup, named by the time it ran: files Apex CLI
 created are deleted, files it edited go back to their pre-setup bytes. It only touches a file whose current content still hashes
-to what Apex CLI wrote; anything you edited afterwards is left alone and reported. Restores create
+to what Apex CLI wrote; anything you edited afterwards is left alone and reported. A setup whose
+remaining files can only be left alone does not block the older ones: the next `apex undo` moves on
+to the most recent setup that still has something to restore. Restores create
 their own backup first, so an undo is itself reversible. Apex CLI records each batch in
 `$APEX_STATE_DIR/journal.json` (default `~/.local/state/apex/journal.json`, mode `0600`); the last
 20 batches are kept. Deleting the journal only forgets the history, it never changes a config.
