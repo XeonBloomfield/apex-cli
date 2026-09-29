@@ -85,33 +85,38 @@ export function sha256(text) {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
+// A private file written beside the target and renamed over it, so nobody ever reads half of it.
+// `check` runs last, right before the rename, and can still call the write off.
+export async function writeAtomic(path, text, check = async () => {}) {
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+  const temporary = `${path}.apex-tmp-${randomUUID().slice(0, 8)}`;
+  try {
+    const handle = await open(temporary, 'wx', 0o600);
+    try { await handle.writeFile(text); await handle.sync(); } finally { await handle.close(); }
+    await check();
+    await rename(temporary, path);
+  } finally {
+    await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; });
+  }
+}
+
 export async function removeChange(change) {
   const { path, before } = change;
-  await assertSafePath(path);
   if (await readConfig(path) !== before) throw new Error(`Configuration changed while planning: ${path}. Run undo again.`);
   await unlink(path);
 }
 
 export async function writeChange(change) {
   const { path, before, after } = change;
-  if (before === after) return null;
-  await assertSafePath(path);
+  // readConfig refuses symbolic links anywhere on the path, so this check also guards the write.
   if (await readConfig(path) !== before) throw new Error(`Configuration changed while planning: ${path}. Run init again.`);
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const suffix = randomUUID().slice(0, 8);
-  const backup = before === null ? null : `${path}.apex-backup-${suffix}`;
+  const backup = before === null ? null : `${path}.apex-backup-${randomUUID().slice(0, 8)}`;
   if (backup) {
     const handle = await open(backup, 'wx', 0o600);
     try { await handle.writeFile(before); } finally { await handle.close(); }
   }
-  const temporary = `${path}.apex-tmp-${suffix}`;
-  try {
-    const handle = await open(temporary, 'wx', 0o600);
-    try { await handle.writeFile(after); await handle.sync(); } finally { await handle.close(); }
+  await writeAtomic(path, after, async () => {
     if (await readConfig(path) !== before) throw new Error(`Configuration changed before saving: ${path}`);
-    await rename(temporary, path);
-  } finally {
-    await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; });
-  }
+  });
   return backup;
 }

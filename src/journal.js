@@ -1,8 +1,6 @@
-import { mkdir, open, rename, unlink } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { randomUUID } from 'node:crypto';
-import { readConfig, sha256 } from './config.js';
+import { readConfig, sha256, writeAtomic } from './config.js';
 
 const KEEP_BATCHES = 20;
 
@@ -32,33 +30,28 @@ export async function readJournal(path) {
 }
 
 async function writeJournal(path, entries) {
-  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const seen = [];
-  for (const entry of entries) if (!seen.includes(entry.batch)) seen.push(entry.batch);
-  const keep = new Set(seen.slice(-KEEP_BATCHES));
-  const temporary = `${path}.apex-tmp-${randomUUID()}`;
-  const handle = await open(temporary, 'wx', 0o600);
-  try { await handle.writeFile(`${JSON.stringify(entries.filter(entry => keep.has(entry.batch)), null, 2)}\n`); await handle.sync(); }
-  finally { await handle.close(); }
-  try { await rename(temporary, path); }
-  finally { await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; }); }
+  const keep = new Set(batchIds(entries).slice(-KEEP_BATCHES));
+  await writeAtomic(path, `${JSON.stringify(entries.filter(entry => keep.has(entry.batch)), null, 2)}\n`);
 }
 
-export function newEntryFields(change, batch, at = new Date().toISOString()) {
+// Oldest first, in the order the setups ran.
+export const batchIds = entries => [...new Set(entries.map(entry => entry.batch))];
+
+export function newEntry(change, batch, backup) {
   return {
     batch,
-    at,
+    at: new Date().toISOString(),
     path: change.path,
     format: change.format ?? 'json',
     created: change.before === null,
     beforeSha: change.before === null ? null : sha256(change.before),
     afterSha: sha256(change.after),
-    backup: null,
+    backup,
     undoneAt: null,
   };
 }
 
-export async function markUndone(journalFile, entry, at = new Date().toISOString()) {
+export async function markUndone(journalFile, entry) {
   const entries = await readJournal(journalFile);
   const found = entries.find(candidate => candidate.batch === entry.batch
     && candidate.path === entry.path && !candidate.undoneAt);
@@ -66,7 +59,7 @@ export async function markUndone(journalFile, entry, at = new Date().toISOString
     throw new Error(`Journal has no pending entry for ${entry.path}. That file was already reverted, `
       + `so mark it undone by hand if you restored it yourself.`);
   }
-  found.undoneAt = at;
+  found.undoneAt = new Date().toISOString();
   await writeJournal(journalFile, entries);
 }
 
@@ -80,8 +73,7 @@ export async function appendEntry(journalFile, entry) {
 
 // Newest first, and only the files each setup still has to take back.
 function pendingBatches(entries) {
-  const batches = [...new Set(entries.map(entry => entry.batch))].reverse();
-  return batches
+  return batchIds(entries).reverse()
     .map(batch => ({ batch, at: entries.findLast(entry => entry.batch === batch).at,
       items: entries.filter(entry => entry.batch === batch && !entry.undoneAt) }))
     .filter(batch => batch.items.length);
@@ -94,13 +86,13 @@ async function planEntry(entry) {
     return { entry, action: 'skip', reason: `changed by something else since Apex CLI wrote it${entry.backup ? `. Restore ${entry.backup} manually` : ''}` };
   }
   const format = entry.format ?? 'json';
-  if (entry.created) return { entry, action: 'remove', current, change: { path: entry.path, before: current, after: null, format } };
+  if (entry.created) return { entry, action: 'remove', change: { path: entry.path, before: current, after: null, format } };
   if (entry.backup === null) return { entry, action: 'skip', reason: 'original backup was never recorded for this file' };
   const stored = await readConfig(entry.backup);
   if (stored === null || sha256(stored) !== entry.beforeSha) {
     return { entry, action: 'skip', reason: `original backup is missing (${entry.backup})` };
   }
-  return { entry, action: 'restore', current, change: { path: entry.path, before: current, after: stored, format } };
+  return { entry, action: 'restore', change: { path: entry.path, before: current, after: stored, format } };
 }
 
 // The newest setup with something left to restore. A setup whose remaining files can only be

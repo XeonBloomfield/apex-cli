@@ -22,13 +22,16 @@ export function isEnvReference(value) {
     && /^(?:\{env:[A-Za-z0-9_]+\}|\$[A-Za-z0-9_]+|[A-Z][A-Z0-9_]{2,})$/.test(value);
 }
 
+const LITERAL = /^(?:true|false|null|-?\d+(?:\.\d+)?)$/;
+
+// The one rule for a value under a secret-looking key: hidden unless it is plainly not a credential.
+const hidesValue = (key, value) => isSecretKey(key) && !isEnvReference(value) && !LITERAL.test(value);
+
 export function maskValue(key, value, secret) {
   if (typeof value !== 'string') return value;
   if (containsSecret(value, secret)) return REDACTED;
-  return isSecretKey(key) && !isEnvReference(value) ? REDACTED : value;
+  return hidesValue(key, value) ? REDACTED : value;
 }
-
-const LITERAL = /^(?:true|false|null|-?\d+(?:\.\d+)?)$/;
 const unquote = text => text.replace(/^["']|["']$/g, '');
 
 // A value is a quoted scalar, a bare scalar, or a bracketed list; braces end a match instead of
@@ -40,7 +43,7 @@ const SECRET_PAIR = /("(?:[^"\n]*)"|'[^'\n]+'|[A-Za-z0-9_.-]+)(\s*[:=]\s*)("(?:[
 const QUOTED = /"(?:[^"\\\n]*)"|'[^'\\\n]*'/g;
 
 function redactPair(key, value) {
-  if (LITERAL.test(unquote(value)) || isEnvReference(unquote(value)) || !isSecretKey(unquote(key))) return null;
+  if (!hidesValue(unquote(key), unquote(value))) return null;
   return value.startsWith('[') ? value.replace(QUOTED, REDACTED) : REDACTED;
 }
 

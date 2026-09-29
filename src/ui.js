@@ -126,7 +126,7 @@ function changeLines(changes, secret, limit) {
 
 const DIFF_MARKS = ['+', '-', '@'];
 
-function fileBlock(file, { secret, maxChanges = 12 }) {
+function fileBlock(file, { secret }) {
   const status = STATUS[file.status];
   const limit = width() - GUTTER.length;
   const path = clip(shortPath(file.path), limit - STATUS_COLUMN);
@@ -143,7 +143,7 @@ function fileBlock(file, { secret, maxChanges = 12 }) {
     }
     return lines;
   }
-  const shown = file.changes.slice(0, maxChanges);
+  const shown = file.changes.slice(0, 12);
   lines.push(...changeLines(shown, secret, width()));
   if (file.changes.length > shown.length) lines.push(dim(`… ${file.changes.length - shown.length} more`));
   return lines;
@@ -173,7 +173,7 @@ function heading(text, gap = SECTION_GAP) {
 
 export function renderPlan(title, files, options = {}) {
   const pending = files.some(file => file.status !== 'unchanged');
-  heading(pending ? `${title}:` : `${title}: nothing to change`, SECTION_GAP);
+  heading(pending ? `${title}:` : `${title}: nothing to change`);
   plain('');
   for (const [index, file] of files.entries()) {
     for (const line of fileBlock(file, options)) plain(line);
@@ -182,7 +182,7 @@ export function renderPlan(title, files, options = {}) {
 }
 
 export function section(title, lines) {
-  heading(title, SECTION_GAP);
+  heading(title);
   plain('');
   for (const line of lines) {
     for (const wrapped of wrap(line, width() - GUTTER.length)) plain(model(wrapped));
@@ -192,7 +192,7 @@ export function section(title, lines) {
 // The one place with a border, drawn by hand so the right edge always lines up: widths are
 // measured on the visible text, and the border sits just outside the gutter, so text in the box
 // starts in the same column as every other line.
-export function box(lines) {
+function box(lines) {
   const left = ' '.repeat(GUTTER.length - 2);
   const inner = Math.max(...lines.map(line => visible(line).length));
   const edge = '\u2500'.repeat(inner + 2);

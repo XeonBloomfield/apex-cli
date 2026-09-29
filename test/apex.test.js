@@ -32,7 +32,6 @@ async function fixture(context) {
 }
 
 const cli = (args, env) => spawnSync(process.execPath, [BIN, ...args], { env, encoding: 'utf8' });
-const envFor = home => ({ ...process.env, HOME: home, PATH: '', NO_COLOR: '1', CALLSTACK_AUTH_TOKEN: 'x' });
 const exists = path => access(path).then(() => true, () => false);
 
 const OPENCODE = '{\n  // keep this\n  "theme": "dark",\n  "model": "anthropic/claude-opus-4.5"\n}\n';
@@ -50,11 +49,10 @@ const writeConfig = async (env, id, contents) => {
 };
 
 async function seedHome(env) {
-  await mkdir(env.XDG_CONFIG_HOME + '/opencode', { recursive: true });
-  await mkdir(env.CLAUDE_CONFIG_DIR, { recursive: true });
+  await writeConfig(env, 'opencode', OPENCODE);
+  await writeConfig(env, 'claude', CLAUDE);
+  // Codex is detected by its directory, and init creates its file there.
   await mkdir(env.CODEX_HOME, { recursive: true });
-  await writeFile(join(env.XDG_CONFIG_HOME, 'opencode', 'opencode.json'), OPENCODE);
-  await writeFile(join(env.CLAUDE_CONFIG_DIR, 'settings.json'), CLAUDE);
 }
 
 test('JSONC edits preserve comments, unrelated settings and existing provider models', () => {
@@ -486,9 +484,9 @@ test('CLI validates flags and commands', async context => {
 });
 
 test('manual adapters never write editor credentials', async context => {
-  const { home } = await fixture(context);
+  const { home, env } = await fixture(context);
   for (const id of ['cursor', 'copilot']) assert.deepEqual(await planAssistant({ id, directory: home }), []);
-  const result = cli(['init', '--assistants', 'cursor,copilot', '--apply'], envFor(home));
+  const result = cli(['init', '--assistants', 'cursor,copilot', '--apply'], env);
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Cursor: Settings/);
   assert.match(result.stdout, /Manual setup for VS Code \(Copilot\)/);

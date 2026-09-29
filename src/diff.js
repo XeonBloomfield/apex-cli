@@ -5,7 +5,7 @@ import { redactText } from './secrets.js';
 
 function readValues(text, format) {
   if (format === 'toml') {
-    try { return parseToml(text ?? ''); }
+    try { return parseToml(text); }
     catch { throw new Error('Invalid TOML while reading values.'); }
   }
   return parseJson(text, 'values');

@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { BASE_URL, GUIDE_URL, IDS, MANUAL, MANUAL_IDS, MODEL, NAMES, RUNNABLE, detect, executable, launchOptions, planAssistant, runExpansion } from './assistants.js';
 import { removeChange, writeChange } from './config.js';
 import { MODE_NOTE, describeFile, resolveMode, runWrites } from './plan.js';
-import { appendEntry, journalPath, markUndone, newEntryFields, planUndo, readJournal } from './journal.js';
+import { appendEntry, batchIds, journalPath, markUndone, newEntry, planUndo, readJournal } from './journal.js';
 import { maskChanges } from './secrets.js';
 import { shortPath } from './paths.js';
 import { interactive } from './tty.js';
@@ -162,19 +162,19 @@ function readFlags(rest, command) {
   };
 }
 
-async function planAll(assistants, { secret, showDiff = true } = {}) {
+async function planAll(assistants, options) {
   return Promise.all(assistants.map(async assistant => {
     const base = {
       id: assistant.id,
       name: NAMES[assistant.id],
       detected: assistant.detected,
-      evidence: assistant.binary || assistant.evidence || null,
+      evidence: assistant.evidence || null,
       manual: MANUAL_IDS.includes(assistant.id),
       error: null,
       files: [],
     };
     try {
-      base.files = (await planAssistant(assistant)).map(change => describeFile(change, { secret, showDiff }));
+      base.files = (await planAssistant(assistant)).map(change => describeFile(change, options));
     } catch (error) {
       base.error = error.message;
     }
@@ -188,6 +188,15 @@ const token = () => process.env.CALLSTACK_AUTH_TOKEN?.trim() || undefined;
 const stamp = iso => iso.replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC');
 
 const pendingOf = entry => entry.files.filter(file => file.status !== 'unchanged');
+
+// A batch that fails halfway has still moved files on disk, so --json reports every path that
+// landed together with the error, rather than nothing at all.
+async function applyAll(items, apply) {
+  const applied = [];
+  try { for (const item of items) applied.push(await apply(item)); }
+  catch (error) { return { applied, failure: error }; }
+  return { applied, failure: null };
+}
 const jsonFile = (file, secret) => ({
   path: file.path,
   status: file.status,
@@ -250,18 +259,13 @@ async function commandInit(rest) {
   // One apply step, used by the interactive report and by --json alike.
   const applyOne = async change => {
     const backup = await writeChange(change);
-    await appendEntry(journalFile, { ...newEntryFields(change, batch), backup });
+    await appendEntry(journalFile, newEntry(change, batch, backup));
     return backup;
   };
 
   if (flags.json) {
-    // A write that fails halfway still leaves files moved on disk, so the payload is emitted with
-    // whatever already landed plus the error, rather than nothing at all.
-    const applied = [];
-    let failure = null;
-    try {
-      if (flags.mode === 'apply' && !blocked.length) for (const change of pending) { await applyOne(change); applied.push(change.path); }
-    } catch (error) { failure = error; }
+    const writes = flags.mode === 'apply' && !blocked.length ? pending : [];
+    const { applied, failure } = await applyAll(writes, async change => { await applyOne(change); return change.path; });
     console.log(JSON.stringify({
       command: 'init',
       mode: flags.mode,
@@ -387,7 +391,7 @@ async function commandUndo(rest) {
       console.log(JSON.stringify({ command: 'undo', journal: journalFile, entries }, null, 2));
       return;
     }
-    const batches = [...new Set(entries.map(entry => entry.batch))];
+    const batches = batchIds(entries);
     ui.intro('Apex CLI · Setup history', 'Only the journal is read here; configs stay untouched.');
     for (const batch of batches) {
       const items = entries.filter(entry => entry.batch === batch);
@@ -422,11 +426,8 @@ async function commandUndo(rest) {
   };
 
   if (flags.json) {
-    const applied = [];
-    let failure = null;
-    try {
-      if (flags.mode === 'apply') for (const item of restorable) { await applyOne(item); applied.push(item.entry.path); }
-    } catch (error) { failure = error; }
+    const writes = flags.mode === 'apply' ? restorable : [];
+    const { applied, failure } = await applyAll(writes, async item => { await applyOne(item); return item.entry.path; });
     console.log(JSON.stringify({
       command: 'undo',
       mode: flags.mode,

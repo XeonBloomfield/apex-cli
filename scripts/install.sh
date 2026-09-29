@@ -27,9 +27,7 @@ main() {
   esac
   if [ "$#" -eq 0 ]; then
     printf '\nInstalled. Next: "%s/bin/apex" init\n' "$prefix"
-  elif [ -t 0 ]; then
-    "$prefix/bin/apex" init "$@"
-  elif [ -r /dev/tty ] && ( : </dev/tty ) 2>/dev/null; then
+  elif [ ! -t 0 ] && [ -r /dev/tty ] && ( : </dev/tty ) 2>/dev/null; then
     "$prefix/bin/apex" init "$@" </dev/tty
   else
     "$prefix/bin/apex" init "$@"
