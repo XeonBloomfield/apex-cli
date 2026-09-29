@@ -246,5 +246,12 @@ export async function confirmApply(question, hint) {
   return answer;
 }
 
+// A yes/no question outside the apply flow; cancelling it simply means no.
+export async function ask(question) {
+  plain('');
+  const answer = await p.confirm({ message: question, initialValue: true });
+  return answer === true;
+}
+
 export { green, yellow, gray, dim, bold, underline, link };
 export { wrap };

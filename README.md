@@ -13,11 +13,11 @@ Requires Node.js 22+ and npm. Nothing to install first:
 npx @callstack/apex init
 ```
 
-Everything Apex CLI tells you to run next (`npx @callstack/apex undo`,
-`npx @callstack/apex run codex`, …) is spelled the same way, because an npx run leaves no `apex`
-command behind. For the short `apex` command, install it once with
-`npm install -g @callstack/apex`; the rest of this README uses that short form. Uninstalling does
-not undo your configs, so run `apex undo` first if you want them back.
+An npx run leaves no `apex` command behind, so after setup it offers to install the same version
+globally (`npm install -g @callstack/apex`), which is what makes `apex undo` and `apex run codex`
+work later; the rest of this README uses that short form. Say no, or run non-interactively, and
+every next step Apex CLI prints is spelled `npx @callstack/apex …` instead. Uninstalling does not
+undo your configs, so run `apex undo` first if you want them back.
 
 ## Try it locally
 

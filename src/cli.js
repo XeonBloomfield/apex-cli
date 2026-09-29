@@ -49,6 +49,23 @@ const SHELLS = ['zsh', 'bash', 'fish'];
 // Started through npx, there is no `apex` on PATH afterwards, so every command Apex CLI tells you
 // to run next is spelled the way this run was started.
 const APEX = process.env.npm_command === 'exec' ? 'npx @callstack/apex' : 'apex';
+const packageVersion = async () => JSON.parse(await readFile(new URL('../package.json', import.meta.url))).version;
+
+// An npx run leaves nothing behind, yet undo and run are for later, so an interactive npx run
+// offers to keep the exact version that just ran. Returns whether `apex` is now installed.
+async function installApex() {
+  if (!await ui.ask('Install the apex command globally, so apex undo and apex run work later?')) return false;
+  const npm = spawn('npm', ['install', '--global', `@callstack/apex@${await packageVersion()}`], {
+    // npm's own errors (EACCES and the like) are the useful part; its progress output is not.
+    stdio: ['ignore', 'ignore', 'inherit'],
+    // npm is a .cmd shim on Windows, which only runs through a shell; the arguments are fixed.
+    shell: process.platform === 'win32',
+  });
+  const code = await new Promise(resolve => { npm.once('error', () => resolve(1)); npm.once('exit', resolve); });
+  if (code === 0) ui.success('Installed. From now on, just type apex.');
+  else ui.warn('npm could not install it. Run npm install -g @callstack/apex yourself.');
+  return code === 0;
+}
 const OPTIONS = Object.fromEntries(Object.entries(FLAGS).map(([name, flag]) =>
   [name, { type: flag.type, ...(flag.short ? { short: flag.short } : {}) }]));
 const flagsOf = command => COMMANDS[command].flags;
@@ -322,6 +339,7 @@ async function commandInit(rest) {
     if (result.declined) return;
     applied = result.applied;
   }
+  const apex = APEX !== 'apex' && flags.mode === 'prompt' && await installApex() ? 'apex' : APEX;
   // Steps for the assistants Apex CLI will not touch come after the diff, which is the part
   // people are reviewing.
   for (const entry of manual) {
@@ -334,7 +352,7 @@ async function commandInit(rest) {
     ui.dim('Apex CLI never reads, stores or logs the key itself.'),
   ]);
   const runnable = active.map(entry => entry.id).filter(id => RUNNABLE.includes(id));
-  const rows = runnable.map(id => ({ command: `${APEX} run ${id}`, expansion: runExpansion(id) }));
+  const rows = runnable.map(id => ({ command: `${apex} run ${id}`, expansion: runExpansion(id) }));
   const commandWidth = ui.columnWidth(rows.map(row => row.command));
   ui.section(runnable.length
     ? `Use these commands to run ${MODEL} with your selected harnesses:`
@@ -344,8 +362,8 @@ async function commandInit(rest) {
     `...or pick "${MODEL}" from the UI when setting up manually.`,
     `For more instructions, visit: ${ui.link(GUIDE_URL)}`,
     // Only a run that wrote something has anything to take back.
-    ...(applied ? ['', `If you want to undo the changes, run ${ui.bold(`${APEX} undo`)}`] : []),
-    ...(APEX === 'apex' ? [] : ['', ui.dim('For the short apex command: npm install -g @callstack/apex')]),
+    ...(applied ? ['', `If you want to undo the changes, run ${ui.bold(`${apex} undo`)}`] : []),
+    ...(apex === 'apex' ? [] : ['', ui.dim('For the short apex command: npm install -g @callstack/apex')]),
   ]);
 }
 
@@ -581,7 +599,7 @@ async function main(argv) {
   const [command, ...rest] = argv;
   if (!command || ['--help', '-h', 'help'].includes(command)) { printHelp(); return; }
   if (['--version', '-v'].includes(command)) {
-    console.log(JSON.parse(await readFile(new URL('../package.json', import.meta.url))).version);
+    console.log(await packageVersion());
     return;
   }
   if (command === 'completion') return commandCompletion(rest);
