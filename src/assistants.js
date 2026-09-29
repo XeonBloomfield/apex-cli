@@ -14,6 +14,29 @@ export const NAMES = {
 };
 export const RUNNABLE = ['codex', 'claude', 'opencode', 'pi'];
 
+// What Apex can do, declared in each tool's own vocabulary wherever the tool has one.
+const CONTEXT_WINDOW = 262144;
+const MAX_INPUT = 240000;
+const MAX_OUTPUT = 16384;
+const EFFORTS = ['none', 'low', 'medium', 'xhigh'];
+const OPENCODE_MODEL = {
+  name: 'Apex',
+  reasoning: true,
+  tool_call: true,
+  attachment: true,
+  modalities: { input: ['text', 'image'], output: ['text'] },
+  limit: { context: CONTEXT_WINDOW, input: MAX_INPUT, output: MAX_OUTPUT },
+  options: { reasoningEffort: 'medium' },
+  variants: Object.fromEntries(EFFORTS.map(effort => [effort, { reasoningEffort: effort }])),
+};
+const PI_MODEL = {
+  id: MODEL,
+  reasoning: true,
+  input: ['text', 'image'],
+  thinkingLevelMap: { off: 'none', minimal: null, low: 'low', medium: 'medium', high: null, xhigh: 'xhigh', max: null },
+  contextWindow: CONTEXT_WINDOW,
+};
+
 async function exists(path) {
   try { await stat(path); return true; }
   catch (error) { if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return false; throw error; }
@@ -89,7 +112,7 @@ export async function planAssistant(assistant) {
         [['provider', 'callstack.ai', 'name'], 'callstack.ai'],
         [['provider', 'callstack.ai', 'options', 'baseURL'], BASE_URL],
         [['provider', 'callstack.ai', 'options', 'apiKey'], '{env:CALLSTACK_AUTH_TOKEN}'],
-        [['provider', 'callstack.ai', 'models', MODEL, 'name'], 'Apex'],
+        [['provider', 'callstack.ai', 'models', MODEL], OPENCODE_MODEL],
         ];
       });
       break;
@@ -104,7 +127,9 @@ export async function planAssistant(assistant) {
           [['providers', 'callstack', 'baseUrl'], BASE_URL],
           [['providers', 'callstack', 'api'], 'openai-completions'],
           [['providers', 'callstack', 'apiKey'], '$CALLSTACK_AUTH_TOKEN'],
-          [['providers', 'callstack', 'models'], models.some(model => model.id === MODEL) ? models : [...models, { id: MODEL }]],
+          // An Apex entry from an earlier setup is upgraded in place; other models keep their order.
+          [['providers', 'callstack', 'models'], models.some(model => model.id === MODEL)
+            ? models.map(model => (model.id === MODEL ? PI_MODEL : model)) : [...models, PI_MODEL]],
         ];
       });
       break;
@@ -117,6 +142,9 @@ export async function planAssistant(assistant) {
       const after = addToml(before, {
         model_provider: 'callstack_ai',
         model: MODEL,
+        model_context_window: CONTEXT_WINDOW,
+        model_max_output_tokens: MAX_OUTPUT,
+        model_reasoning_effort: 'medium',
         model_providers: { callstack_ai: {
           name: 'callstack.ai', base_url: BASE_URL, env_key: 'CALLSTACK_AUTH_TOKEN',
           wire_api: 'responses', requires_openai_auth: false,
@@ -161,11 +189,16 @@ export function runExpansion(id) {
 
 // One line per key: the whole object on one line cannot be folded to a terminal, and a step that
 // wraps into the gutter loses its shape.
-const COPILOT_MODEL = JSON.stringify({ id: MODEL, name: 'Apex', url: BASE_URL, toolCalling: true, vision: true }, null, 2);
+const COPILOT_MODEL = JSON.stringify({
+  id: MODEL, name: 'Apex', url: BASE_URL, toolCalling: true, vision: true, thinking: true,
+  contextWindow: CONTEXT_WINDOW, maxOutputTokens: MAX_OUTPUT,
+  supportsReasoningEffort: EFFORTS, reasoningEffortFormat: 'chat-completions',
+}, null, 2);
 
 export const MANUAL = {
   cursor: [
     `Cursor: Settings → Models → API Keys → OpenAI API Key. Enter your Callstack key, override the base URL with ${BASE_URL}, add and enable ${MODEL}, then select it in Agent.`,
+    'Cursor has no way to declare what a custom model can do (tool calling, vision, reasoning); it infers that itself.',
   ],
   copilot: [
     'Installation of Copilot itself is not verified: Copilot → model selector → Manage Models → Add Models → Custom Endpoint → name callstack.ai → enter your key → Chat Completions.',

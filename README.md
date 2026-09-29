@@ -152,6 +152,11 @@ their own backup first, so an undo is itself reversible. Apex CLI records each b
 | Cursor | Guided setup | Prints endpoint, API-key and custom-model steps; does not modify private editor storage. |
 | VS Code / Copilot | Guided setup | Detects VS Code, not whether Copilot is installed; prints custom-endpoint steps and model JSON, retaining the editor-generated secret reference. |
 
+OpenCode, Pi, Codex and the Copilot model JSON also declare what Apex can do, in each tool's own
+fields: a 262,144-token context window, 16,384 output tokens, tool calling, image input, and the
+`none`/`low`/`medium`/`xhigh` reasoning efforts (default `medium`). Cursor and Claude Code have no
+such fields for a custom model.
+
 Respects `XDG_CONFIG_HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`,
 `XDG_STATE_HOME`/`APEX_STATE_DIR`, and Windows `APPDATA`. Project-specific settings and custom
 `OPENCODE_CONFIG` files are not modified and may override global configuration. OpenCode's v2

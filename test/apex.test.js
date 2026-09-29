@@ -173,6 +173,12 @@ test('all automatic adapters configure and repeat without changing files', async
   const codex = parseToml(await readFile(join(paths.codex, 'callstack_ai.config.toml'), 'utf8'));
   assert.equal(codex.model, MODEL);
   assert.equal(codex.model_providers.callstack_ai.wire_api, 'responses');
+  assert.equal(codex.model_context_window, 262144);
+  assert.equal(codex.model_reasoning_effort, 'medium');
+  const opencode = parseJson(await readFile(join(paths.opencode, 'opencode.json'), 'utf8'));
+  const apex = opencode.provider['callstack.ai'].models[MODEL];
+  assert.equal(apex.tool_call, true);
+  assert.deepEqual(Object.keys(apex.variants), ['none', 'low', 'medium', 'xhigh']);
   const pi = parseJson(await readFile(join(paths.pi, 'models.json'), 'utf8'));
   assert.equal(pi.providers.callstack.apiKey, '$CALLSTACK_AUTH_TOKEN');
 });
@@ -182,12 +188,16 @@ test('Pi keeps other providers and models', async context => {
   const directory = locations(home, env).pi;
   await mkdir(directory, { recursive: true });
   await writeFile(join(directory, 'models.json'), JSON.stringify({ providers: {
-    other: { models: [{ id: 'other' }] }, callstack: { models: [{ id: 'legacy' }] },
+    other: { models: [{ id: 'other' }] }, callstack: { models: [{ id: 'legacy' }, { id: MODEL }, { id: 'later' }] },
   } }));
   const [change] = await planAssistant({ id: 'pi', directory });
   const value = parseJson(change.after);
   assert.equal(value.providers.other.models[0].id, 'other');
-  assert.deepEqual(value.providers.callstack.models, [{ id: 'legacy' }, { id: MODEL }]);
+  // An Apex entry from an earlier setup is upgraded in place, next to models it does not own.
+  const models = value.providers.callstack.models;
+  assert.deepEqual(models.map(model => model.id), ['legacy', MODEL, 'later']);
+  assert.equal(models[1].contextWindow, 262144);
+  assert.equal(models[1].reasoning, true);
 });
 
 test('OpenCode JSONC is edited in place; ambiguous or v2 config is refused', async context => {
