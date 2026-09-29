@@ -1,12 +1,33 @@
 {
   "name": "@callstack/apex",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Configure AI coding assistants to use callstack/Apex",
   "type": "module",
-  "bin": { "apex": "bin/apex.js" },
-  "files": ["bin", "src", "scripts/install.sh", "README.md"],
-  "engines": { "node": ">=22" },
-  "scripts": { "test": "node --test", "check": "node --check bin/apex.js && node --check src/config.js && node --check src/assistants.js && sh -n scripts/install.sh" },
-  "dependencies": { "jsonc-parser": "3.3.1", "smol-toml": "1.4.2" },
-  "publishConfig": { "access": "public" }
+  "bin": {
+    "apex": "bin/apex.js"
+  },
+  "files": [
+    "bin",
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "pretest": "npm run build",
+    "prepack": "npm run build",
+    "test": "node --test",
+    "check": "for f in src/*.js bin/apex.js; do node --check \"$f\" || exit 1; done && npm run build"
+  },
+  "devDependencies": {
+    "@clack/prompts": "1.8.1",
+    "jsonc-parser": "3.3.1",
+    "smol-toml": "1.4.2",
+    "tsdown": "^0.22.14"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }
