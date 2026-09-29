@@ -1,22 +1,39 @@
 {
   "name": "@callstack/apex",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Detects the AI coding assistants installed on your machine and configures them to use Callstack Apex.",
   "license": "MIT",
+  "keywords": [
+    "callstack",
+    "apex",
+    "ai"
+  ],
+  "type": "module",
   "bin": {
     "apex": "bin/apex.js"
   },
   "files": [
     "bin",
-    "src",
+    "dist",
     "README.md"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
-  "keywords": [
-    "callstack",
-    "apex",
-    "ai"
-  ]
+  "scripts": {
+    "build": "tsdown",
+    "pretest": "npm run build",
+    "prepack": "npm run build",
+    "test": "node --test",
+    "check": "for f in src/*.js bin/apex.js; do node --check \"$f\" || exit 1; done && npm run build"
+  },
+  "devDependencies": {
+    "@clack/prompts": "1.8.1",
+    "jsonc-parser": "3.3.1",
+    "smol-toml": "1.4.2",
+    "tsdown": "^0.22.14"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }
