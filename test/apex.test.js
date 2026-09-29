@@ -200,7 +200,7 @@ test('Pi keeps other providers and models', async context => {
   assert.equal(models[1].reasoning, true);
 });
 
-test('OpenCode JSONC is edited in place; ambiguous or v2 config is refused', async context => {
+test('OpenCode JSONC is edited in place, v2 config gets the v2 shape, ambiguous config is refused', async context => {
   const { home, env } = await fixture(context);
   const directory = locations(home, env).opencode;
   await mkdir(directory, { recursive: true });
@@ -208,8 +208,13 @@ test('OpenCode JSONC is edited in place; ambiguous or v2 config is refused', asy
   const [change] = await planAssistant({ id: 'opencode', directory });
   assert.match(change.path, /\.jsonc$/);
   assert.match(change.after, /preserved/);
-  await writeFile(join(directory, 'opencode.jsonc'), '{"providers": {}}');
-  await assert.rejects(planAssistant({ id: 'opencode', directory }), /v2/);
+  await writeFile(join(directory, 'opencode.jsonc'), '{"providers": {"other": {}}}');
+  const [v2] = await planAssistant({ id: 'opencode', directory });
+  const providers = parseJson(v2.after).providers;
+  assert.deepEqual(Object.keys(providers), ['other', 'callstack.ai']);
+  assert.equal(providers['callstack.ai'].models[MODEL].capabilities.tools, true);
+  assert.ok(!('provider' in parseJson(v2.after)), 'no v1 block next to a v2 config');
+  assert.match(v2.steps[0], /\/connect/);
   await writeFile(join(directory, 'opencode.json'), '{}');
   await assert.rejects(planAssistant({ id: 'opencode', directory }), /Both/);
 });

@@ -192,9 +192,11 @@ async function planAll(assistants, options) {
       manual: MANUAL_IDS.includes(assistant.id),
       error: null,
       files: [],
+      steps: [],
     };
     try {
       base.files = (await planAssistant(assistant)).map(change => describeFile(change, options));
+      base.steps = base.files.flatMap(file => file.change.steps ?? []);
     } catch (error) {
       base.error = error.message;
     }
@@ -229,6 +231,7 @@ const jsonAssistant = (entry, secret) => ({
   evidence: entry.evidence,
   manual: entry.manual,
   ...(entry.error ? { error: entry.error } : {}),
+  ...(entry.steps.length ? { steps: entry.steps } : {}),
   files: entry.files.map(file => jsonFile(file, secret)),
 });
 
@@ -342,6 +345,7 @@ async function commandInit(rest) {
   const apex = APEX !== 'apex' && flags.mode === 'prompt' && await installApex() ? 'apex' : APEX;
   // Steps for the assistants Apex CLI will not touch come after the diff, which is the part
   // people are reviewing.
+  for (const entry of active.filter(entry => entry.steps.length)) ui.section(`Finish setting up ${entry.name}`, entry.steps);
   for (const entry of manual) {
     ui.section(`Manual setup for ${entry.name}: Apex CLI writes nothing`, MANUAL[entry.id]);
   }

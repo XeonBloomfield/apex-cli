@@ -29,6 +29,21 @@ const OPENCODE_MODEL = {
   options: { reasoningEffort: 'medium' },
   variants: Object.fromEntries(EFFORTS.map(effort => [effort, { reasoningEffort: effort }])),
 };
+// OpenCode 2 renamed `provider` to `providers` and moved the capability fields around.
+const OPENCODE_V2_PROVIDER = {
+  name: 'callstack.ai',
+  package: '@opencode/ai/providers/openai-compatible',
+  settings: { baseURL: BASE_URL },
+  models: {
+    [MODEL]: {
+      name: 'Apex',
+      capabilities: { tools: true, input: ['text', 'image'], output: ['text'] },
+      limit: { context: CONTEXT_WINDOW, input: MAX_INPUT, output: MAX_OUTPUT },
+      settings: { reasoningEffort: 'medium' },
+      variants: EFFORTS.map(effort => ({ id: effort, settings: { reasoningEffort: effort } })),
+    },
+  },
+};
 const PI_MODEL = {
   id: MODEL,
   reasoning: true,
@@ -105,8 +120,12 @@ export async function planAssistant(assistant) {
       const hasJson = await exists(join(assistant.directory, 'opencode.json'));
       const hasJsonc = await exists(join(assistant.directory, 'opencode.jsonc'));
       if (hasJson && hasJsonc) throw new Error('Both opencode.json and opencode.jsonc exist. Consolidate them before init.');
+      let v2 = false;
       await json(hasJsonc ? 'opencode.jsonc' : 'opencode.json', existing => {
-        if (Object.hasOwn(existing, 'providers')) throw new Error('OpenCode v2 providers format detected. This adapter targets the v1 provider format from the Callstack guide.');
+        // The config says which format it is in; the binary is never run to ask. Anything not
+        // already in the v2 shape gets v1, which OpenCode 2 still reads.
+        v2 = Object.hasOwn(existing, 'providers');
+        if (v2) return [[['providers', 'callstack.ai'], OPENCODE_V2_PROVIDER]];
         return [
         [['provider', 'callstack.ai', 'npm'], '@ai-sdk/openai-compatible'],
         [['provider', 'callstack.ai', 'name'], 'callstack.ai'],
@@ -115,6 +134,8 @@ export async function planAssistant(assistant) {
         [['provider', 'callstack.ai', 'models', MODEL], OPENCODE_MODEL],
         ];
       });
+      // OpenCode 2 keeps provider keys in its own store, so the key is the one step left to you.
+      if (v2) changes[0].steps = ['OpenCode 2 stores provider keys itself: run /connect in OpenCode, pick callstack.ai → "Manually enter API Key", and paste your Callstack key.'];
       break;
     }
     case 'pi':

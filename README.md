@@ -145,7 +145,7 @@ their own backup first, so an undo is itself reversible. Apex CLI records each b
 
 | Assistant | Configuration | Behavior |
 | --- | --- | --- |
-| OpenCode v1 | `~/.config/opencode/opencode.json` or `.jsonc` | Adds `provider.callstack.ai`, OpenAI-compatible transport, model and environment-key reference; preserves the default model. |
+| OpenCode | `~/.config/opencode/opencode.json` or `.jsonc` | Adds `provider.callstack.ai`, OpenAI-compatible transport, model and environment-key reference; preserves the default model. A config already in OpenCode 2's `providers` format gets the v2 entry instead, and you add the key with `/connect`. |
 | Codex 0.134.0+ | `~/.codex/callstack_ai.config.toml` | Adds a self-contained Responses API provider/profile; leaves base config and default model untouched. |
 | Claude Code | `~/.claude/settings.json` | Merges attribution flag only; use `apex run claude` for gateway credentials and model selection. |
 | Pi | `~/.pi/agent/models.json` | Adds `providers.callstack` with Chat Completions, Apex and `$CALLSTACK_AUTH_TOKEN`; preserves other models. Requires a Pi version supporting `$VAR` key interpolation. |
@@ -159,8 +159,8 @@ such fields for a custom model.
 
 Respects `XDG_CONFIG_HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`,
 `XDG_STATE_HOME`/`APEX_STATE_DIR`, and Windows `APPDATA`. Project-specific settings and custom
-`OPENCODE_CONFIG` files are not modified and may override global configuration. OpenCode's v2
-`providers` format is not supported; this adapter uses the v1 `provider` format. Older Codex
+`OPENCODE_CONFIG` files are not modified and may override global configuration. A new OpenCode
+config is written in the v1 format, which OpenCode 2 also reads. Older Codex
 releases using inline `[profiles]` need a manual migration or a newer Codex release.
 
 Windows: file configuration supports Windows paths, but `apex run` refuses `.cmd`/`.bat` shims to
