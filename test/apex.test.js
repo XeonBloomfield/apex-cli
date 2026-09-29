@@ -27,7 +27,9 @@ async function fixture(context) {
     PI_CODING_AGENT_DIR: join(home, '.pi', 'agent'), XDG_CONFIG_HOME: join(home, '.config'),
     APPDATA: join(home, 'AppData', 'Roaming'), APEX_STATE_DIR: join(home, '.apex-state'),
     CALLSTACK_AUTH_TOKEN: 'secret-test-token', NO_COLOR: '1', FORCE_COLOR: '0' };
+  // `npm test` and `npx` set this, and it decides how follow-up commands are spelled.
   delete env.CI;
+  delete env.npm_command;
   return { home, env, journal: join(home, '.apex-state', 'journal.json') };
 }
 
@@ -808,6 +810,13 @@ test('the closing block shows what each run command expands to, and when undo is
   assert.ok(!/If you want to undo/.test(preview.stdout), preview.stdout);
   const repeated = cli([...INIT, '--apply'], env);
   assert.ok(!/If you want to undo/.test(repeated.stdout), repeated.stdout);
+  // Started through npx there is no `apex` on PATH afterwards, so the next steps say npx too.
+  const fresh = (await fixture(context)).env;
+  const viaNpx = cli(['init', '--assistants', 'codex', '--apply'], { ...fresh, npm_command: 'exec' });
+  assert.match(viaNpx.stdout, at(/^npx @callstack\/apex run codex +codex --profile callstack_ai$/));
+  assert.match(viaNpx.stdout, at(/^If you want to undo the changes, run npx @callstack\/apex undo$/));
+  assert.match(viaNpx.stdout, at(/^For the short apex command: npm install -g @callstack\/apex$/));
+  assert.ok(!/For the short apex command/.test(applied.stdout), 'an installed apex needs no hint');
   // Manual-only setups get the guide without a run list they cannot use.
   const manual = cli(['init', '--assistants', 'cursor', '--apply'], env);
   assert.match(manual.stdout, at(/^Use callstack\/Apex with your assistant:$/));

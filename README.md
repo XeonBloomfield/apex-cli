@@ -7,17 +7,17 @@ shows every change it wants to make, and only then writes. Nothing changes until
 
 ## Install
 
-Requires Node.js 22+ and npm.
+Requires Node.js 22+ and npm. Nothing to install first:
 
 ```sh
-npm install -g @callstack/apex
-apex init
+npx @callstack/apex init
 ```
 
-The global install keeps `apex` on your `PATH`, so `apex undo` and `apex run <assistant>` work
-later too. The published package already contains the built `dist/cli.js`, so nothing is compiled
-on your machine. To remove it, run `apex undo` first if you want your configs back (uninstalling
-does not undo them), then `npm rm -g @callstack/apex`.
+Everything Apex CLI tells you to run next (`npx @callstack/apex undo`,
+`npx @callstack/apex run codex`, …) is spelled the same way, because an npx run leaves no `apex`
+command behind. For the short `apex` command, install it once with
+`npm install -g @callstack/apex`; the rest of this README uses that short form. Uninstalling does
+not undo your configs, so run `apex undo` first if you want them back.
 
 ## Try it locally
 

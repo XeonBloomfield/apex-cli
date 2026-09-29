@@ -46,6 +46,9 @@ const COMMANDS = {
 };
 
 const SHELLS = ['zsh', 'bash', 'fish'];
+// Started through npx, there is no `apex` on PATH afterwards, so every command Apex CLI tells you
+// to run next is spelled the way this run was started.
+const APEX = process.env.npm_command === 'exec' ? 'npx @callstack/apex' : 'apex';
 const OPTIONS = Object.fromEntries(Object.entries(FLAGS).map(([name, flag]) =>
   [name, { type: flag.type, ...(flag.short ? { short: flag.short } : {}) }]));
 const flagsOf = command => COMMANDS[command].flags;
@@ -144,7 +147,7 @@ const printHelp = () => console.log(helpText());
 function readFlags(rest, command) {
   const { values } = parseArgs({ args: rest, options: OPTIONS, allowPositionals: false });
   const unsupported = Object.keys(values).filter(name => !flagsOf(command).includes(name));
-  if (unsupported.length) throw new Error(`--${unsupported[0]} is not valid for apex ${command}. See apex --help.`);
+  if (unsupported.length) throw new Error(`--${unsupported[0]} is not valid for apex ${command}. See ${APEX} --help.`);
   const selected = values.assistants === undefined ? null : [...new Set(values.assistants.split(',').map(id => id.trim()))];
   if (selected?.includes('')) throw new Error('--assistants needs at least one id.');
   if (selected?.some(id => !IDS.includes(id))) throw new Error(`Unknown assistant in --assistants. Choose from: ${IDS.join(', ')}`);
@@ -278,16 +281,16 @@ async function commandInit(rest) {
       manualSetup: manual.map(entry => entry.id),
       assistants: chosen.map(entry => jsonAssistant(entry, secret)),
       journal: journalFile,
-      undo: 'apex undo',
+      undo: `${APEX} undo`,
       envVar: 'CALLSTACK_AUTH_TOKEN',
-      nextSteps: active.filter(entry => RUNNABLE.includes(entry.id)).map(entry => `apex run ${entry.id}`),
+      nextSteps: active.filter(entry => RUNNABLE.includes(entry.id)).map(entry => `${APEX} run ${entry.id}`),
     }, null, 2));
     if (blocked.length || failure) process.exitCode = 1;
     return;
   }
 
   if (!ids.length) {
-    ui.outro('No assistant selected, so nothing was written. Pick one with --assistants or run apex init interactively.');
+    ui.outro(`No assistant selected, so nothing was written. Pick one with --assistants or run ${APEX} init interactively.`);
     return;
   }
   if (flags.mode !== 'prompt') {
@@ -296,7 +299,7 @@ async function commandInit(rest) {
   if (blocked.length) {
     ui.plain('');
     for (const entry of blocked) ui.error(`${entry.name}: ${shortPath(entry.error)}`);
-    ui.outro('Blocked by the configuration problems above. Nothing was written. Fix those files and run apex init again.');
+    ui.outro(`Blocked by the configuration problems above. Nothing was written. Fix those files and run ${APEX} init again.`);
     process.exitCode = 1;
     return;
   }
@@ -331,7 +334,7 @@ async function commandInit(rest) {
     ui.dim('Apex CLI never reads, stores or logs the key itself.'),
   ]);
   const runnable = active.map(entry => entry.id).filter(id => RUNNABLE.includes(id));
-  const rows = runnable.map(id => ({ command: `apex run ${id}`, expansion: runExpansion(id) }));
+  const rows = runnable.map(id => ({ command: `${APEX} run ${id}`, expansion: runExpansion(id) }));
   const commandWidth = ui.columnWidth(rows.map(row => row.command));
   ui.section(runnable.length
     ? `Use these commands to run ${MODEL} with your selected harnesses:`
@@ -341,7 +344,8 @@ async function commandInit(rest) {
     `...or pick "${MODEL}" from the UI when setting up manually.`,
     `For more instructions, visit: ${ui.link(GUIDE_URL)}`,
     // Only a run that wrote something has anything to take back.
-    ...(applied ? ['', `If you want to undo the changes, run ${ui.bold('apex undo')}`] : []),
+    ...(applied ? ['', `If you want to undo the changes, run ${ui.bold(`${APEX} undo`)}`] : []),
+    ...(APEX === 'apex' ? [] : ['', ui.dim('For the short apex command: npm install -g @callstack/apex')]),
   ]);
 }
 
@@ -376,7 +380,7 @@ async function commandDetect(rest) {
     const evidence = room >= 8 ? ui.clip(found, room) : '';
     ui.plain(`${entry.detected ? ui.green('found') : ui.dim('absent')}  ${ui.pad(entry.name, nameWidth)}${shade(ui.pad(text, stateWidth))}${ui.dim(evidence)}`);
   }
-  ui.outro('Next: apex init');
+  ui.outro(`Next: ${APEX} init`);
 }
 
 async function commandUndo(rest) {
@@ -447,7 +451,7 @@ async function commandUndo(rest) {
   ui.intro('Apex CLI · Undo the last setup', MODE_NOTE[flags.mode]);
   if (!plan) {
     ui.outro(entries.length
-      ? `Everything Apex CLI has written here has already been undone. History: apex undo --list (journal: ${shortPath(journalFile)})`
+      ? `Everything Apex CLI has written here has already been undone. History: ${APEX} undo --list (journal: ${shortPath(journalFile)})`
       : `Nothing recorded yet, so nothing to undo. Journal: ${shortPath(journalFile)}`);
     return;
   }
@@ -478,10 +482,10 @@ async function commandUndo(rest) {
 
 async function commandRun(rest) {
   const [id, ...passed] = rest;
-  if (!RUNNABLE.includes(id)) throw new Error(`apex run needs one of: ${RUNNABLE.join(', ')}. See apex --help.`);
+  if (!RUNNABLE.includes(id)) throw new Error(`apex run needs one of: ${RUNNABLE.join(', ')}. See ${APEX} --help.`);
   const options = launchOptions(id);
   const binary = await executable(id);
-  if (!binary) throw new Error(`${id} was not found on PATH. Install it first, then run apex init.`);
+  if (!binary) throw new Error(`${id} was not found on PATH. Install it first, then run ${APEX} init.`);
   if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(binary)) {
     throw new Error('Windows .cmd/.bat launchers are not executed through a shell. Use WSL or launch the configured assistant directly.');
   }
