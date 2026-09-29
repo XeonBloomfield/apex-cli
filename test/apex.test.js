@@ -141,11 +141,27 @@ test('detection uses executable files and config directories without executing b
   await writeFile(join(bin, 'pi'), '#!/bin/sh\nexit 91\n', { mode: 0o755 });
   await writeFile(join(bin, 'claude'), 'not executable', { mode: 0o600 });
   await mkdir(env.CODEX_HOME);
-  const result = await detect({ home, env: { ...env, PATH: bin }, platform: 'linux' });
+  const result = await detect({ home, env: { ...env, PATH: bin }, platform: 'linux', cwd: home });
   assert.equal(result.find(item => item.id === 'pi').detected, true);
   assert.equal(result.find(item => item.id === 'claude').detected, false);
   assert.equal(result.find(item => item.id === 'codex').detected, true);
   assert.equal(result.find(item => item.id === 'cursor').detected, false);
+  assert.equal(result.find(item => item.id === 'ai-sdk').detected, false, 'no package.json here');
+});
+
+test('an AI SDK project gets the connector snippet, and nothing is written into it', async context => {
+  const { home, env } = await fixture(context);
+  const project = join(home, 'project');
+  await mkdir(project);
+  await writeFile(join(project, 'package.json'), JSON.stringify({ dependencies: { ai: '^5.0.0' } }));
+  const [found] = (await detect({ home, env, platform: 'linux', cwd: project })).filter(item => item.id === 'ai-sdk');
+  assert.equal(found.detected, true);
+  assert.equal(found.evidence, join(project, 'package.json'));
+  const result = spawnSync(process.execPath, [BIN, 'init', '--assistants', 'ai-sdk', '--apply'], { env, cwd: project, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, at(/^ {2}apiKey: process\.env\.CALLSTACK_AUTH_TOKEN,$/));
+  assert.match(result.stdout, /modelContextWindowTokens: 262144/);
+  assert.deepEqual(await readdir(project), ['package.json']);
 });
 
 test('platform locations respect Windows and environment overrides', () => {
@@ -484,7 +500,7 @@ test('json output is machine readable, mode-correct and free of secrets', async 
   assert.equal(added.find(change => change.key === 'provider.callstack.ai.options.apiKey').value,
     '{env:CALLSTACK_AUTH_TOKEN}', 'credential references stay visible, they are not secrets');
   const detectJson = JSON.parse(cli(['detect', '--json'], env).stdout);
-  assert.equal(detectJson.length, 6);
+  assert.equal(detectJson.length, 7);
   assert.equal(detectJson.find(entry => entry.id === 'pi').detected, false);
   assert.ok(detectJson.every(entry => 'files' in entry));
 });
@@ -722,7 +738,7 @@ test('completions offer each flag only for the commands that accept it', () => {
   const fishFlags = name => fish.split('\n').filter(line => line.includes(`__fish_seen_subcommand_from ${name}"`));
   assert.ok(fishFlags('undo').some(each => each.includes('-l list')), fishFlags('undo').join('\n'));
   assert.ok(!fishFlags('detect').some(each => each.includes('assistants')), fishFlags('detect').join('\n'));
-  assert.match(fish, /-l assistants -a "opencode codex claude pi cursor copilot"/);
+  assert.match(fish, /-l assistants -a "opencode codex claude pi cursor copilot ai-sdk"/);
   assert.ok(!fishFlags('run').some(each => each.includes('cursor')), 'run offers only what it can launch');
   assert.match(fish, /-l apply -d 'write without prompting'/);
   for (const each of fish.split('\n')) assert.equal((each.match(/'/g) || []).length % 2, 0, each);
@@ -740,7 +756,7 @@ COMP_CWORD=$((\${#COMP_WORDS[@]} - 1)); _apex_completions; echo "\${COMPREPLY[*]
   assert.match(complete('apex undo'), /--list/);
   assert.match(complete('apex init --apply'), /--assistants/, 'flags complete after other flags too');
   assert.equal(complete('apex run'), 'codex claude opencode pi');
-  assert.equal(complete('apex init --assistants'), 'opencode codex claude pi cursor copilot');
+  assert.equal(complete('apex init --assistants'), 'opencode codex claude pi cursor copilot ai-sdk');
 });
 
 test('zsh completes on the very first call after autoloading', () => {

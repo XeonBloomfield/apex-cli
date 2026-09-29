@@ -402,7 +402,7 @@ async function commandDetect(rest) {
   for (const { entry, text, shade } of rows) {
     const found = entry.evidence ? shortPath(entry.evidence) : 'no config found';
     const evidence = room >= 8 ? ui.clip(found, room) : '';
-    ui.plain(`${ui.pad(entry.detected ? ui.green('found') : ui.dim('absent'), 8)}${ui.pad(entry.name, nameWidth)}${shade(ui.pad(text, stateWidth))}${ui.dim(evidence)}`);
+    ui.plain(`${ui.pad(entry.detected ? ui.green('found') : ui.dim('absent'), 8)}${ui.pad(entry.name, nameWidth)}${shade(evidence ? ui.pad(text, stateWidth) : text)}${ui.dim(evidence)}`);
   }
   ui.outro(`Next: ${APEX} init`);
 }

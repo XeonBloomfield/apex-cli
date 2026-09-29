@@ -1,4 +1,4 @@
-import { access, stat } from 'node:fs/promises';
+import { access, readFile, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join, delimiter } from 'node:path';
 import { homedir } from 'node:os';
@@ -7,10 +7,10 @@ import { editJson, parseJson, readConfig, addToml } from './config.js';
 export const MODEL = 'callstack/Apex';
 export const BASE_URL = 'https://api.callstack.ai/v1';
 export const GUIDE_URL = 'https://app.notion.com/p/callstack/Apex-how-to-use-it-36d5d027c0f880e99d03d1c37a77382f';
-export const IDS = ['opencode', 'codex', 'claude', 'pi', 'cursor', 'copilot'];
+export const IDS = ['opencode', 'codex', 'claude', 'pi', 'cursor', 'copilot', 'ai-sdk'];
 export const NAMES = {
   opencode: 'OpenCode', codex: 'Codex', claude: 'Claude Code', pi: 'Pi',
-  cursor: 'Cursor', copilot: 'VS Code (Copilot)',
+  cursor: 'Cursor', copilot: 'VS Code (Copilot)', 'ai-sdk': 'Vercel AI SDK / Eve',
 };
 export const RUNNABLE = ['codex', 'claude', 'opencode', 'pi'];
 
@@ -87,12 +87,27 @@ export function locations(home = homedir(), env = process.env, platform = proces
   };
 }
 
+// The AI SDK is a project dependency rather than a tool on this machine, so it is found in the
+// package.json of the directory Apex CLI runs from.
+async function aiSdkProject(cwd) {
+  const path = join(cwd, 'package.json');
+  let pkg;
+  try { pkg = JSON.parse(await readFile(path, 'utf8')); } catch { return null; }
+  const deps = { ...pkg?.dependencies, ...pkg?.devDependencies };
+  return ['ai', '@ai-sdk/openai', 'eve'].some(name => Object.hasOwn(deps, name)) ? path : null;
+}
+
 export async function detect(options = {}) {
   const home = options.home ?? homedir();
   const env = options.env ?? process.env;
   const platform = options.platform ?? process.platform;
+  const cwd = options.cwd ?? process.cwd();
   const paths = locations(home, env, platform);
   return Promise.all(IDS.map(async id => {
+    if (id === 'ai-sdk') {
+      const evidence = await aiSdkProject(cwd);
+      return { id, detected: Boolean(evidence), binary: null, evidence, directory: cwd };
+    }
     const command = id === 'copilot' ? 'code' : id;
     const binary = await executable(command, env, platform);
     const markers = [paths[id]];
@@ -216,6 +231,20 @@ const COPILOT_MODEL = JSON.stringify({
   supportsReasoningEffort: EFFORTS, reasoningEffortFormat: 'chat-completions',
 }, null, 2);
 
+// Kept to short lines, so the snippet is never folded out of shape.
+const AI_SDK_SNIPPET = [
+  "import { createOpenAI } from '@ai-sdk/openai';",
+  '',
+  'const apex = createOpenAI({',
+  "  name: 'callstack',",
+  `  baseURL: '${BASE_URL}',`,
+  '  apiKey: process.env.CALLSTACK_AUTH_TOKEN,',
+  '});',
+  `// apex('${MODEL}') with generateText / streamText.`,
+  `// Reasoning effort (${EFFORTS.join(', ')}):`,
+  "// providerOptions: { callstack: { reasoningEffort: 'medium' } }",
+];
+
 export const MANUAL = {
   cursor: [
     `Cursor: Settings → Models → API Keys → OpenAI API Key. Enter your Callstack key, override the base URL with ${BASE_URL}, add and enable ${MODEL}, then select it in Agent.`,
@@ -225,6 +254,11 @@ export const MANUAL = {
     'Installation of Copilot itself is not verified: Copilot → model selector → Manage Models → Add Models → Custom Endpoint → name callstack.ai → enter your key → Chat Completions.',
     'Keep the generated apiKey secret reference; add this object to its models array:',
     ...COPILOT_MODEL.split('\n'),
+  ],
+  'ai-sdk': [
+    'Apex CLI never writes your key into a project. Keep it in CALLSTACK_AUTH_TOKEN (for example in a .env that git ignores) and create the provider with:',
+    ...AI_SDK_SNIPPET,
+    `Eve: set modelContextWindowTokens: ${CONTEXT_WINDOW} on defineAgent, or compaction will fail to compile.`,
   ],
 };
 export const MANUAL_IDS = Object.keys(MANUAL);

@@ -44,7 +44,7 @@ Each command accepts only its own flags, and `--help` and the shell completions 
 `apex init --wat` fails fast, and so does a flag in the wrong command
 (`apex detect --no-diff`). Only `--apply` writes, so there is no "preview *and* write" to argue
 about. `--assistants <ids>` is a comma list of `opencode`, `codex`,
-`claude`, `pi`, `cursor`, `copilot`.
+`claude`, `pi`, `cursor`, `copilot`, `ai-sdk`.
 
 Non-interactive callers (`--no-interactive`, `--json`, pipes, CI) never get a prompt and never
 have files changed unless they also pass `--apply`. `--json` prints a machine-readable plan with
@@ -151,6 +151,7 @@ their own backup first, so an undo is itself reversible. Apex CLI records each b
 | Pi | `~/.pi/agent/models.json` | Adds `providers.callstack` with Chat Completions, Apex and `$CALLSTACK_AUTH_TOKEN`; preserves other models. Requires a Pi version supporting `$VAR` key interpolation. |
 | Cursor | Guided setup | Prints endpoint, API-key and custom-model steps; does not modify private editor storage. |
 | VS Code / Copilot | Guided setup | Detects VS Code, not whether Copilot is installed; prints custom-endpoint steps and model JSON, retaining the editor-generated secret reference. |
+| Vercel AI SDK / Eve | Guided setup | Detected from the `package.json` in the directory you run Apex CLI from (`ai`, `@ai-sdk/openai` or `eve`); prints the connector snippet, which reads the key from `CALLSTACK_AUTH_TOKEN`, and the Eve context-window setting. Nothing is written into the project. |
 
 OpenCode, Pi, Codex and the Copilot model JSON also declare what Apex can do, in each tool's own
 fields: a 262,144-token context window, 16,384 output tokens, tool calling, image input, and the
