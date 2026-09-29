@@ -191,6 +191,8 @@ test('all automatic adapters configure and repeat without changing files', async
   assert.equal(codex.model_providers.callstack_ai.wire_api, 'responses');
   assert.equal(codex.model_context_window, 262144);
   assert.equal(codex.model_reasoning_effort, 'medium');
+  // Codex has no output-token setting; `codex --strict-config` rejects the field outright.
+  assert.ok(!('model_max_output_tokens' in codex));
   const opencode = parseJson(await readFile(join(paths.opencode, 'opencode.json'), 'utf8'));
   const apex = opencode.provider['callstack.ai'].models[MODEL];
   assert.equal(apex.tool_call, true);
@@ -214,6 +216,30 @@ test('Pi keeps other providers and models', async context => {
   assert.deepEqual(models.map(model => model.id), ['legacy', MODEL, 'later']);
   assert.equal(models[1].contextWindow, 262144);
   assert.equal(models[1].reasoning, true);
+});
+
+test('upgrading from 0.2 keeps the keys it stored, so nobody is left sending no key', async context => {
+  const { home, env } = await fixture(context);
+  const paths = locations(home, env);
+  // What 0.2 wrote: OpenCode's key in its own key store, and Pi's key inline.
+  const authFile = join(home, '.local', 'share', 'opencode', 'auth.json');
+  await mkdir(dirname(authFile), { recursive: true });
+  await writeFile(authFile, JSON.stringify({ 'callstack.ai': { type: 'api', key: 'sk-stored-by-0.2' } }));
+  await mkdir(paths.opencode, { recursive: true });
+  await writeFile(join(paths.opencode, 'opencode.json'), JSON.stringify({ provider: { 'callstack.ai': { options: { baseURL: 'https://api.callstack.ai/v1' } } } }));
+  const [opencode] = await planAssistant({ id: 'opencode', directory: paths.opencode, authFile });
+  assert.equal(parseJson(opencode.after).provider['callstack.ai'].options.apiKey, undefined);
+  // Without a stored key, the config references the environment as before.
+  const [fresh] = await planAssistant({ id: 'opencode', directory: paths.opencode, authFile: join(home, 'none.json') });
+  assert.equal(parseJson(fresh.after).provider['callstack.ai'].options.apiKey, '{env:CALLSTACK_AUTH_TOKEN}');
+
+  await mkdir(paths.pi, { recursive: true });
+  const pi = key => writeFile(join(paths.pi, 'models.json'), JSON.stringify({ providers: { callstack: { apiKey: key, models: [{ id: MODEL }] } } }));
+  const piKey = async () => parseJson((await planAssistant({ id: 'pi', directory: paths.pi }))[0].after).providers.callstack.apiKey;
+  await pi('sk-stored-by-0.2');
+  assert.equal(await piKey(), 'sk-stored-by-0.2');
+  await pi('XXX');
+  assert.equal(await piKey(), '$CALLSTACK_AUTH_TOKEN', "0.2's placeholder is not a key");
 });
 
 test('OpenCode JSONC is edited in place, v2 config gets the v2 shape, ambiguous config is refused', async context => {

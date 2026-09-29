@@ -118,9 +118,23 @@ export async function detect(options = {}) {
     if (id === 'copilot') markers.push(join(home, '.vscode', 'extensions'));
     const found = [];
     for (const path of markers) if (await exists(path)) found.push(path);
-    return { id, detected: Boolean(binary || found.length), binary, evidence: binary || found[0], directory: paths[id] };
+    return {
+      id, detected: Boolean(binary || found.length), binary, evidence: binary || found[0], directory: paths[id],
+      ...(id === 'opencode' ? { authFile: join(env.XDG_DATA_HOME || join(home, '.local', 'share'), 'opencode', 'auth.json') } : {}),
+    };
   }));
 }
+
+// A key the tool already holds keeps working after an upgrade: Apex CLI 0.2 put one in OpenCode's
+// own key store and one in Pi's models.json. Only a tool without a key gets the environment
+// reference, so an upgrade never leaves someone without CALLSTACK_AUTH_TOKEN sending no key.
+async function openCodeHasKey(authFile) {
+  if (!authFile) return false;
+  try { return Object.hasOwn(JSON.parse(await readConfig(authFile) ?? '{}'), 'callstack.ai'); }
+  catch { return false; }
+}
+// 0.2 wrote this placeholder when no key was given, so it counts as no key.
+const PI_PLACEHOLDER = 'XXX';
 
 export async function planAssistant(assistant) {
   const changes = [];
@@ -136,6 +150,7 @@ export async function planAssistant(assistant) {
       const hasJsonc = await exists(join(assistant.directory, 'opencode.jsonc'));
       if (hasJson && hasJsonc) throw new Error('Both opencode.json and opencode.jsonc exist. Consolidate them before init.');
       let v2 = false;
+      const storedKey = await openCodeHasKey(assistant.authFile);
       await json(hasJsonc ? 'opencode.jsonc' : 'opencode.json', existing => {
         // The config says which format it is in; the binary is never run to ask. Anything not
         // already in the v2 shape gets v1, which OpenCode 2 still reads.
@@ -145,7 +160,7 @@ export async function planAssistant(assistant) {
         [['provider', 'callstack.ai', 'npm'], '@ai-sdk/openai-compatible'],
         [['provider', 'callstack.ai', 'name'], 'callstack.ai'],
         [['provider', 'callstack.ai', 'options', 'baseURL'], BASE_URL],
-        [['provider', 'callstack.ai', 'options', 'apiKey'], '{env:CALLSTACK_AUTH_TOKEN}'],
+        ...(storedKey ? [] : [[['provider', 'callstack.ai', 'options', 'apiKey'], '{env:CALLSTACK_AUTH_TOKEN}']]),
         [['provider', 'callstack.ai', 'models', MODEL], OPENCODE_MODEL],
         ];
       });
@@ -156,13 +171,14 @@ export async function planAssistant(assistant) {
     case 'pi':
       await json('models.json', existing => {
         const models = existing.providers?.callstack?.models ?? [];
+        const key = existing.providers?.callstack?.apiKey;
         if (!Array.isArray(models) || models.some(model => !model || typeof model.id !== 'string')) {
           throw new Error('Expected Pi models to be an array of model objects.');
         }
         return [
           [['providers', 'callstack', 'baseUrl'], BASE_URL],
           [['providers', 'callstack', 'api'], 'openai-completions'],
-          [['providers', 'callstack', 'apiKey'], '$CALLSTACK_AUTH_TOKEN'],
+          ...(key && key !== PI_PLACEHOLDER ? [] : [[['providers', 'callstack', 'apiKey'], '$CALLSTACK_AUTH_TOKEN']]),
           // An Apex entry from an earlier setup is upgraded in place; other models keep their order.
           [['providers', 'callstack', 'models'], models.some(model => model.id === MODEL)
             ? models.map(model => (model.id === MODEL ? PI_MODEL : model)) : [...models, PI_MODEL]],
@@ -179,7 +195,6 @@ export async function planAssistant(assistant) {
         model_provider: 'callstack_ai',
         model: MODEL,
         model_context_window: CONTEXT_WINDOW,
-        model_max_output_tokens: MAX_OUTPUT,
         model_reasoning_effort: 'medium',
         model_providers: { callstack_ai: {
           name: 'callstack.ai', base_url: BASE_URL, env_key: 'CALLSTACK_AUTH_TOKEN',

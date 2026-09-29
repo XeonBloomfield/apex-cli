@@ -204,10 +204,10 @@ How that works underneath:
 - All selected configurations are parsed before any write. Malformed files, conflicting Codex
   profile keys and symlinked files or directories are refused, and one bad assistant blocks the
   whole batch instead of half-applying it.
-- JSON/JSONC edits preserve comments and unrelated keys. Existing Callstack endpoint and auth
-  fields are replaced with the documented endpoint and environment references; existing auth files
-  are left untouched, so a stored credential may still win and needs removal in the assistant's
-  own auth UI.
+- JSON/JSONC edits preserve comments and unrelated keys. The Callstack endpoint is set to the
+  documented one. A key the assistant already has (in OpenCode's own key store, or in Pi's
+  `models.json`, where Apex CLI 0.2 put them) is kept, so upgrading never leaves an assistant
+  without a key; otherwise the config references `CALLSTACK_AUTH_TOKEN`.
 - Writes use same-directory temporary files plus rename with mode `0600` (new directories `0700`),
   and abort if the file changed on disk between planning and saving. This is not a lock or a
   multi-file transaction: a later I/O failure can leave earlier writes applied. `apex undo`
