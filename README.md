@@ -19,26 +19,6 @@ work later; the rest of this README uses that short form. Say no, or run non-int
 every next step Apex CLI prints is spelled `npx @callstack/apex …` instead. Uninstalling does not
 undo your configs, so run `apex undo` first if you want them back.
 
-## Try it locally
-
-From a checkout of this repository:
-
-```sh
-npm ci
-npm run build   # bundles dist/cli.js, which bin/apex.js runs
-npm link        # puts `apex` on your PATH, pointing at this checkout
-apex --help
-apex detect
-apex init --no-interactive   # preview only: prints the plan, writes nothing
-apex init       # interactive: pick assistants, review, confirm
-apex undo --no-interactive   # preview the reversal
-```
-
-`npm link` is the standard npm mechanism: `package.json` declares
-`"bin": { "apex": "bin/apex.js" }`, so npm symlinks the command into your Node `bin`
-directory (no sudo with nvm, no shell aliases, no `PATH` edits). Remove it with
-`npm rm -g @callstack/apex`. From a checkout you can also always run `node bin/apex.js …`.
-
 ## Commands
 
 | Command | What it does | Writes by default? |
@@ -50,11 +30,9 @@ directory (no sudo with nvm, no shell aliases, no `PATH` edits). Remove it with
 | `apex undo` | Reverts the most recent Apex CLI setup, with the same preview and confirmation | Only after you confirm |
 | `apex undo --list` | Shows recorded setups and which are already undone (`--json` prints the journal) | No |
 | `apex run <assistant> [-- <args>]` | Launches the assistant with the gateway, model and credentials in the child environment | No |
-| `apex completion <zsh\|bash\|fish>` | Prints a shell completion script generated from the live command and flag tables | No |
+| `apex completion <zsh\|bash\|fish>` | Prints a shell completion script | No |
 
-One table in `src/cli.js` defines every command and the flags it accepts, and `--help`, flag
-parsing and the completion scripts are all generated from it, so none of the three can promise a
-flag the others reject:
+Each command accepts only its own flags, and `--help` and the shell completions list exactly those:
 
 | Command | Flags |
 | --- | --- |
@@ -141,15 +119,6 @@ apex completion fish > ~/.config/fish/completions/apex.fish
 
    If you want to undo the changes, run apex undo
 ```
-Every Apex line sits in the same 3-space gutter the prompt library uses for its own text (`◇  …`,
-`│  …`), so the picker, the plan and the diff below it read as one column; the header box sits just
-outside that gutter, so its text lines up too. Blocks are separated by blank lines that headings own,
-so nothing can slide out of alignment when a terminal wraps a line, and wrapped text stays inside the
-gutter because widths are measured on the text without its colour codes. Columns inside a line are
-sized from their longest value plus a gap, so labels never touch the text beside them. Added lines are green,
-removals red, hunk markers magenta, the `callstack/Apex` model id is always green, and environment
-references such as `{env:CALLSTACK_AUTH_TOKEN}` are highlighted instead of printed as secrets.
-
 `Environment` only shows the `export CALLSTACK_AUTH_TOKEN=…` line while the variable is missing; once
 it is set you get a green `✓ CALLSTACK_AUTH_TOKEN is set in this shell` instead. The closing block shows
 what each `apex run` expands to, links the guide (the URL is never folded, so it stays clickable), and
@@ -242,32 +211,6 @@ How that works underneath:
 - No shell startup file is ever edited. The CLI makes no API requests and cannot verify your
   key or gateway access; launch a configured assistant to test the connection.
 
-## Development
-
-```sh
-npm test          # builds dist, then runs node:test against a throwaway HOME
-npm run check     # syntax checks, build
-npm pack --dry-run
-```
-
-`src/` is deliberately small and each module owns one concept: `assistants.js` detection and the
-per-tool adapters, `config.js` safe reads and JSONC/TOML edits, `diff.js` value and text diffs,
-`secrets.js` the redaction rules, `journal.js` the undo journal, `plan.js` plan modelling and the
-write flow, `ui.js` presentation, `paths.js` and `tty.js` the two environment probes, and `cli.js`
-the command surface.
-
-Tests create a temporary `HOME`, fake credentials and a temporary state directory, so they never
-touch your assistants' settings. One test asserts the published bundle imports nothing but `node:*`,
-which is the point of bundling: `tsdown` inlines `@clack/prompts`, `jsonc-parser` and `smol-toml`
-into a single `dist/cli.js` and the package ships with no runtime dependencies. Before releasing,
-test each supported tool against a real account and verify version compatibility.
-
-Maintainers with publish access to `@callstack` can release with:
-
-```sh
-npm publish --access public
-```
-
 ## Configuration references
 
 - Official Codex advanced configuration: `https://developers.openai.com/codex/config-advanced/`
@@ -276,3 +219,7 @@ npm publish --access public
   (JSONC and `{env:VARIABLE}` support).
 - Pi custom models: `https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/models.md`
   (`$VARIABLE` key interpolation; bare uppercase names are literals in current docs).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
