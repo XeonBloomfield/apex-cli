@@ -1,11 +1,11 @@
 import { lstat, readFile, mkdir, open, rename, unlink } from 'node:fs/promises';
 import { dirname, resolve, parse as parsePath, join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { parse, modify, applyEdits } from 'jsonc-parser';
 import { parse as parseToml, stringify } from 'smol-toml';
 
-export async function assertSafePath(path) {
+async function assertSafePath(path) {
   let current = parsePath(resolve(path)).root;
   for (const part of resolve(path).slice(current.length).split(/[\\/]/).filter(Boolean)) {
     current = join(current, part);
@@ -70,31 +70,53 @@ export function addToml(text, desired, path) {
   if (!Object.keys(missing).length) return text ?? '';
   const scalars = Object.fromEntries(Object.entries(missing).filter(([, value]) => !object(value)));
   const tables = Object.fromEntries(Object.entries(missing).filter(([, value]) => object(value)));
-  const next = `${stringify(scalars)}\n${text ?? ''}\n${stringify(tables)}`;
+  // Scalars must precede any existing table, but never rewrite what is already there:
+  // joining trimmed blocks keeps the diff to the lines that were actually appended.
+  const parts = [];
+  if (Object.keys(scalars).length) parts.push(stringify(scalars));
+  if ((text ?? '').trim()) parts.push(text);
+  if (Object.keys(tables).length) parts.push(stringify(tables));
+  const next = `${parts.map(part => part.replace(/\s+$/, '')).join('\n\n')}\n`;
   parseToml(next);
   return next;
 }
 
-export async function writeChange(change) {
-  const { path, before, after } = change;
-  if (before === after) return null;
-  await assertSafePath(path);
-  if (await readConfig(path) !== before) throw new Error(`Configuration changed while planning: ${path}. Run init again.`);
+export function sha256(text) {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+// A private file written beside the target and renamed over it, so nobody ever reads half of it.
+// `check` runs last, right before the rename, and can still call the write off.
+export async function writeAtomic(path, text, check = async () => {}) {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-  const suffix = randomUUID();
-  const backup = before === null ? null : `${path}.apex-backup-${suffix}`;
-  if (backup) {
-    const handle = await open(backup, 'wx', 0o600);
-    try { await handle.writeFile(before); } finally { await handle.close(); }
-  }
-  const temporary = `${path}.apex-tmp-${suffix}`;
+  const temporary = `${path}.apex-tmp-${randomUUID().slice(0, 8)}`;
   try {
     const handle = await open(temporary, 'wx', 0o600);
-    try { await handle.writeFile(after); await handle.sync(); } finally { await handle.close(); }
-    if (await readConfig(path) !== before) throw new Error(`Configuration changed before saving: ${path}`);
+    try { await handle.writeFile(text); await handle.sync(); } finally { await handle.close(); }
+    await check();
     await rename(temporary, path);
   } finally {
     await unlink(temporary).catch(error => { if (error.code !== 'ENOENT') throw error; });
   }
+}
+
+export async function removeChange(change) {
+  const { path, before } = change;
+  if (await readConfig(path) !== before) throw new Error(`Configuration changed while planning: ${path}. Run undo again.`);
+  await unlink(path);
+}
+
+export async function writeChange(change) {
+  const { path, before, after } = change;
+  // readConfig refuses symbolic links anywhere on the path, so this check also guards the write.
+  if (await readConfig(path) !== before) throw new Error(`Configuration changed while planning: ${path}. Run init again.`);
+  const backup = before === null ? null : `${path}.apex-backup-${randomUUID().slice(0, 8)}`;
+  if (backup) {
+    const handle = await open(backup, 'wx', 0o600);
+    try { await handle.writeFile(before); } finally { await handle.close(); }
+  }
+  await writeAtomic(path, after, async () => {
+    if (await readConfig(path) !== before) throw new Error(`Configuration changed before saving: ${path}`);
+  });
   return backup;
 }
