@@ -5,9 +5,23 @@ A CLI for configuring coding assistants to use `callstack/Apex`.
 `apex init` detects the assistants on your machine, lets you pick which ones to configure,
 shows every change it wants to make, and only then writes. Nothing changes until you say so.
 
-## Try it locally
+## Install
 
 Requires Node.js 22+ and npm.
+
+```sh
+npm install -g @callstack/apex
+apex init
+```
+
+The global install keeps `apex` on your `PATH`, so `apex undo` and `apex run <assistant>` work
+later too. The published package already contains the built `dist/cli.js`, so nothing is compiled
+on your machine. To remove it, run `apex undo` first if you want your configs back (uninstalling
+does not undo them), then `npm rm -g @callstack/apex`.
+
+## Try it locally
+
+From a checkout of this repository:
 
 ```sh
 npm ci
@@ -22,11 +36,7 @@ apex undo --no-interactive   # preview the reversal
 `npm link` is the standard npm mechanism: `package.json` declares
 `"bin": { "apex": "bin/apex.js" }`, so npm symlinks the command into your Node `bin`
 directory (no sudo with nvm, no shell aliases, no `PATH` edits). Remove it with
-`npm rm -g @callstack/apex`. Until the package is published, `npm link` is how you get the
-bare `apex` command; from a checkout you can also always run `node bin/apex.js …`, and once
-published a plain `npm install -g @callstack/apex` (or `scripts/install.sh`) does the same
-thing from the registry: the published tarball already contains `dist/cli.js`, so no build
-step or install scripts are needed on your machine.
+`npm rm -g @callstack/apex`. From a checkout you can also always run `node bin/apex.js …`.
 
 ## Commands
 
@@ -177,9 +187,8 @@ Respects `XDG_CONFIG_HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_
 `providers` format is not supported; this adapter uses the v1 `provider` format. Older Codex
 releases using inline `[profiles]` need a manual migration or a newer Codex release.
 
-Windows: use npm/npx for setup. File configuration supports Windows paths, but `apex run` refuses
-`.cmd`/`.bat` shims to avoid shell interpolation; launch the configured assistant directly or use
-WSL. The shell installer targets macOS, Linux and WSL.
+Windows: file configuration supports Windows paths, but `apex run` refuses `.cmd`/`.bat` shims to
+avoid shell interpolation; launch the configured assistant directly or use WSL.
 
 ## Authentication
 
@@ -232,28 +241,11 @@ How that works underneath:
 - No shell startup file is ever edited. The CLI makes no API requests and cannot verify your
   key or gateway access; launch a configured assistant to test the connection.
 
-## Shell installation
-
-The bootstrapper installs the npm package to `~/.local` without sudo, without downloading Node.js
-and without touching shell profiles. Set `APEX_INSTALL_PREFIX` and/or `APEX_VERSION` to override.
-
-```sh
-sh scripts/install.sh
-sh scripts/install.sh --assistants codex,pi --no-interactive
-sh scripts/install.sh --assistants codex,pi --apply
-```
-
-The first command only installs and prints the next one. Passing init options also runs setup; when
-piped, prompts reconnect to `/dev/tty` if available. Upgrade by rerunning with a newer
-`APEX_VERSION`; uninstall with
-`npm uninstall --global --prefix "$HOME/.local" @callstack/apex`. Uninstalling the CLI does not
-undo assistant configuration: run `apex undo` first.
-
 ## Development
 
 ```sh
 npm test          # builds dist, then runs node:test against a throwaway HOME
-npm run check     # syntax checks, installer syntax, build
+npm run check     # syntax checks, build
 npm pack --dry-run
 ```
 

@@ -9,7 +9,6 @@
   "files": [
     "bin",
     "dist",
-    "scripts/install.sh",
     "README.md"
   ],
   "engines": {
@@ -20,7 +19,7 @@
     "pretest": "npm run build",
     "prepare": "npm run build",
     "test": "node --test",
-    "check": "for f in src/*.js bin/apex.js; do node --check \"$f\" || exit 1; done && sh -n scripts/install.sh && npm run build"
+    "check": "for f in src/*.js bin/apex.js; do node --check \"$f\" || exit 1; done && npm run build"
   },
   "devDependencies": {
     "@clack/prompts": "1.8.1",

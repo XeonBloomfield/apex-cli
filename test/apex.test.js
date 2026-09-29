@@ -524,41 +524,6 @@ test('CLI run forwards argument boundaries, child environment and exit status', 
   assert.equal(output.token, env.CALLSTACK_AUTH_TOKEN);
 });
 
-test('shell installer uses user prefix, version pin and forwards init options', async context => {
-  const { home, env } = await fixture(context);
-  const bin = join(home, 'bin');
-  const prefix = join(home, 'prefix with spaces');
-  const log = join(home, 'npm-args');
-  await mkdir(bin);
-  await mkdir(join(prefix, 'bin'), { recursive: true });
-  await writeFile(join(bin, 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  await writeFile(join(bin, 'npm'), '#!/bin/sh\nprintf "%s\\n" "$@" > "$INSTALL_LOG"\n', { mode: 0o755 });
-  await writeFile(join(prefix, 'bin', 'apex'), '#!/bin/sh\nprintf "ARG:%s\\n" "$@"\n', { mode: 0o755 });
-  const result = spawnSync('/bin/sh', ['scripts/install.sh', '--assistants', 'codex,pi', '--apply'], {
-    env: { ...env, PATH: bin, APEX_INSTALL_PREFIX: prefix, APEX_VERSION: '0.1.0', INSTALL_LOG: log }, encoding: 'utf8',
-  });
-  assert.equal(result.status, 0, result.stderr);
-  const args = (await readFile(log, 'utf8')).trim().split('\n');
-  assert.ok(args.includes(prefix));
-  assert.ok(args.includes('@callstack/apex@0.1.0'));
-  assert.ok(args.includes('--ignore-scripts'));
-  assert.match(result.stdout, /ARG:init\nARG:--assistants\nARG:codex,pi\nARG:--apply/);
-});
-
-test('shell installer rejects missing prerequisites and unsafe versions', async context => {
-  const { home, env } = await fixture(context);
-  const bin = join(home, 'bin');
-  await mkdir(bin);
-  const run = extra => spawnSync('/bin/sh', ['scripts/install.sh'], { env: { ...env, PATH: bin, ...extra }, encoding: 'utf8' });
-  assert.match(run({}).stderr, /requires Node.js/);
-  await writeFile(join(bin, 'node'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-  await writeFile(join(bin, 'npm'), '#!/bin/sh\nexit 99\n', { mode: 0o755 });
-  assert.match(run({}).stderr, /22 or newer/);
-  await writeFile(join(bin, 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-  assert.match(run({ APEX_VERSION: '../evil' }).stderr, /Invalid APEX_VERSION/);
-  assert.match(run({ APEX_INSTALL_PREFIX: 'relative' }).stderr, /absolute path/);
-});
-
 test('closing the pipe early exits quietly instead of crashing', async context => {
   const { env } = await fixture(context);
   await seedHome(env);
