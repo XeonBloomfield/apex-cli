@@ -1,6 +1,7 @@
 # Apex CLI
 
-A CLI for configuring coding assistants to use `callstack/Apex`.
+Configures the AI coding assistants on your machine to use
+[Callstack Apex](https://apex.callstack.com/) (`callstack/Apex`).
 
 `apex init` detects the assistants on your machine, lets you pick which ones to configure,
 shows every change it wants to make, and only then writes. Nothing changes until you say so.

@@ -1,7 +1,13 @@
 {
   "name": "@callstack/apex",
   "version": "0.3.0",
-  "description": "Configure AI coding assistants to use callstack/Apex",
+  "description": "Detects the AI coding assistants installed on your machine and configures them to use Callstack Apex.",
+  "license": "MIT",
+  "keywords": [
+    "callstack",
+    "apex",
+    "ai"
+  ],
   "type": "module",
   "bin": {
     "apex": "bin/apex.js"
