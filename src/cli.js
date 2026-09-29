@@ -357,7 +357,9 @@ async function commandInit(rest) {
   ui.section(runnable.length
     ? `Use these commands to run ${MODEL} with your selected harnesses:`
     : `Use ${MODEL} with your assistant:`, [
-    ...rows.map(row => `${ui.pad(row.command, commandWidth)}${ui.dim(row.expansion)}`),
+    // A long expansion folds under itself instead of back to the gutter, so the command column stays clear.
+    ...rows.flatMap(row => ui.wrap(row.expansion, ui.width() - 3 - commandWidth)
+      .map((part, index) => `${ui.pad(index ? '' : row.command, commandWidth)}${ui.dim(part)}`)),
     '',
     `...or pick "${MODEL}" from the UI when setting up manually.`,
     `For more instructions, visit: ${ui.link(GUIDE_URL)}`,
@@ -396,7 +398,7 @@ async function commandDetect(rest) {
   for (const { entry, text, shade } of rows) {
     const found = entry.evidence ? shortPath(entry.evidence) : 'no config found';
     const evidence = room >= 8 ? ui.clip(found, room) : '';
-    ui.plain(`${entry.detected ? ui.green('found') : ui.dim('absent')}  ${ui.pad(entry.name, nameWidth)}${shade(ui.pad(text, stateWidth))}${ui.dim(evidence)}`);
+    ui.plain(`${ui.pad(entry.detected ? ui.green('found') : ui.dim('absent'), 8)}${ui.pad(entry.name, nameWidth)}${shade(ui.pad(text, stateWidth))}${ui.dim(evidence)}`);
   }
   ui.outro(`Next: ${APEX} init`);
 }

@@ -25,6 +25,7 @@ From a checkout of this repository:
 
 ```sh
 npm ci
+npm run build   # bundles dist/cli.js, which bin/apex.js runs
 npm link        # puts `apex` on your PATH, pointing at this checkout
 apex --help
 apex detect

@@ -476,7 +476,7 @@ test('json output is machine readable, mode-correct and free of secrets', async 
 
 test('CLI validates flags and commands', async context => {
   const { env } = await fixture(context);
-  assert.equal(cli(['--version'], env).stdout.trim(), '0.2.0');
+  assert.equal(cli(['--version'], env).stdout.trim(), JSON.parse(await readFile('package.json', 'utf8')).version);
   assert.equal(cli(['--help'], env).status, 0);
   assert.match(cli(['--help'], env).stdout, /apex undo \[--list\] \[options\]/);
   for (const args of [['wat'], ['init', '--assistants', 'unknown'], ['init', '--assistants', ''], ['init', '--wat'],

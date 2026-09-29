@@ -1,6 +1,6 @@
 {
   "name": "@callstack/apex",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Configure AI coding assistants to use callstack/Apex",
   "type": "module",
   "bin": {
@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsdown",
     "pretest": "npm run build",
-    "prepare": "npm run build",
+    "prepack": "npm run build",
     "test": "node --test",
     "check": "for f in src/*.js bin/apex.js; do node --check \"$f\" || exit 1; done && npm run build"
   },
