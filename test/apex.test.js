@@ -311,6 +311,31 @@ test('Pi keeps other providers and models', async context => {
   assert.equal(models[1].reasoning, true);
 });
 
+test('Pi saves the Apex thinking default for direct launches and upgrades it reversibly', async context => {
+  const { env } = await fixture(context);
+  const path = join(env.PI_CODING_AGENT_DIR, 'settings.json');
+  const original = '{\n // keep this\n "defaultProvider": "other", "defaultModel": "other-model",\n "defaultThinkingLevel": "low",\n "modelThinkingLevels": {"callstack/callstack/Apex": "off", "other/other-model": "medium"}\n}\n';
+  await mkdir(env.PI_CODING_AGENT_DIR, { recursive: true });
+  await writeFile(path, original);
+  const preview = cli(['init', '--assistants', 'pi', '--no-interactive'], env);
+  assert.equal(preview.status, 0, preview.stderr);
+  assert.equal(await readFile(path, 'utf8'), original);
+  const applied = cli(['init', '--assistants', 'pi', '--apply'], env);
+  assert.equal(applied.status, 0, applied.stderr);
+  const updated = await readFile(path, 'utf8');
+  const settings = parseJson(updated);
+  assert.equal(settings.modelThinkingLevels['callstack/callstack/Apex'], 'xhigh');
+  assert.equal(settings.modelThinkingLevels['other/other-model'], 'medium');
+  assert.equal(settings.defaultThinkingLevel, 'low');
+  assert.equal(settings.defaultProvider, 'other');
+  assert.equal(settings.defaultModel, 'other-model');
+  assert.match(updated, /keep this/);
+  assert.equal(cli(['init', '--assistants', 'pi', '--apply'], env).status, 0);
+  assert.equal(await readFile(path, 'utf8'), updated);
+  assert.equal(cli(['undo', '--apply'], env).status, 0);
+  assert.equal(await readFile(path, 'utf8'), original);
+});
+
 test('upgrading from 0.2 keeps the keys it stored, so nobody is left sending no key', async context => {
   const { home, env } = await fixture(context);
   const paths = locations(home, env);
@@ -518,13 +543,13 @@ test('CLI applies once, repeats cleanly and writes a private journal', async con
   assert.match(applied.stdout, /backup: [a-z.]+apex-backup-[0-9a-f]{8}/);
   assert.equal((await stat(journal)).mode & 0o777, 0o600);
   const entries = JSON.parse(await readFile(journal, 'utf8'));
-  assert.equal(entries.length, 4);
-  assert.equal(entries.filter(entry => entry.created).length, 2);
+  assert.equal(entries.length, 5);
+  assert.equal(entries.filter(entry => entry.created).length, 3);
   const repeated = cli([...INIT, '--apply'], env);
   assert.equal(repeated.status, 0, repeated.stderr);
   assert.match(repeated.stdout, at(/^Planned changes: nothing to change$/));
   assert.match(repeated.stdout, at(/^Already configured\. Nothing to write\.$/));
-  assert.equal(JSON.parse(await readFile(journal, 'utf8')).length, 4);
+  assert.equal(JSON.parse(await readFile(journal, 'utf8')).length, 5);
   assert.ok((await readdir(join(env.XDG_CONFIG_HOME, 'opencode'))).some(name => name.includes('.apex-backup-')));
 });
 
@@ -566,6 +591,7 @@ test('a setup whose files can only be skipped does not block older ones', async 
   assert.equal(cli(['init', '--assistants', 'pi', '--apply'], env).status, 0);
   const pi = configPath(env, 'pi');
   await writeFile(pi, '{}\n');
+  await writeFile(join(env.PI_CODING_AGENT_DIR, 'settings.json'), '{}\n');
   const undone = cli(['undo', '--apply'], env);
   assert.equal(undone.status, 0, undone.stderr);
   assert.equal(await exists(configPath(env, 'codex')), false, 'the older setup is undone');

@@ -200,6 +200,7 @@ export async function planAssistant(assistant) {
             } : model)) : [...models, PI_MODEL]],
         ];
       });
+      await json('settings.json', [[['modelThinkingLevels', `callstack/${MODEL}`], 'xhigh']]);
       break;
     case 'claude':
       await json('settings.json', [[['env', 'CLAUDE_CODE_ATTRIBUTION_HEADER'], '0']]);
