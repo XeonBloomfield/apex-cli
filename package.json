@@ -24,6 +24,7 @@
     "build": "tsdown",
     "pretest": "npm run build",
     "prepack": "npm run build",
+    "prepublishOnly": "npm test",
     "test": "node --test",
     "check": "for f in src/*.js bin/apex.js; do node --check \"$f\" || exit 1; done && npm run build"
   },

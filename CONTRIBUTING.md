@@ -66,9 +66,14 @@ and try the packed tarball end to end (`npm pack`, then `npx --package ./callsta
 
 The version in `package.json` must be new on npm: an interactive `npx @callstack/apex init` offers to
 install exactly the version that is running, so a reused number would install something else.
-`npm pack` and `npm publish` build `dist/` first (`prepack`). Maintainers with publish access to
-`@callstack` release with:
+
+Maintainers with publish access to `@callstack` release from an up-to-date `main`:
 
 ```sh
-npm publish --access public
+npm version minor   # or patch/major: bumps package.json, commits and tags
+npm publish         # runs the tests, builds dist/, publishes publicly
+git push --follow-tags
 ```
+
+There is no separate build step: `npm publish` runs the tests first (`prepublishOnly`) and builds
+`dist/` into the tarball (`prepack`), and stops if either fails.
