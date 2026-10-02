@@ -2,7 +2,7 @@ import { access, readFile, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { join, delimiter } from 'node:path';
 import { homedir } from 'node:os';
-import { editJson, parseJson, readConfig, addToml } from './config.js';
+import { editJson, parseJson, readConfig, updateToml } from './config.js';
 
 export const MODEL = 'callstack/Apex';
 export const BASE_URL = 'https://api.callstack.ai/v1';
@@ -16,8 +16,9 @@ export const RUNNABLE = ['codex', 'claude', 'opencode', 'pi'];
 
 // What Apex can do, declared in each tool's own vocabulary wherever the tool has one.
 const CONTEXT_WINDOW = 262144;
-const MAX_INPUT = 240000;
-const MAX_OUTPUT = 16384;
+const MAX_INPUT = 220000;
+const MAX_OUTPUT = 32768;
+const COMPACT_AT = 220000;
 const EFFORTS = ['none', 'low', 'medium', 'xhigh'];
 const OPENCODE_MODEL = {
   name: 'Apex',
@@ -26,7 +27,7 @@ const OPENCODE_MODEL = {
   attachment: true,
   modalities: { input: ['text', 'image'], output: ['text'] },
   limit: { context: CONTEXT_WINDOW, input: MAX_INPUT, output: MAX_OUTPUT },
-  options: { reasoningEffort: 'medium' },
+  options: { reasoningEffort: 'xhigh' },
   variants: Object.fromEntries(EFFORTS.map(effort => [effort, { reasoningEffort: effort }])),
 };
 // OpenCode 2 renamed `provider` to `providers` and moved the capability fields around.
@@ -39,7 +40,7 @@ const OPENCODE_V2_PROVIDER = {
       name: 'Apex',
       capabilities: { tools: true, input: ['text', 'image'], output: ['text'] },
       limit: { context: CONTEXT_WINDOW, input: MAX_INPUT, output: MAX_OUTPUT },
-      settings: { reasoningEffort: 'medium' },
+      settings: { reasoningEffort: 'xhigh' },
       variants: EFFORTS.map(effort => ({ id: effort, settings: { reasoningEffort: effort } })),
     },
   },
@@ -50,6 +51,7 @@ const PI_MODEL = {
   input: ['text', 'image'],
   thinkingLevelMap: { off: 'none', minimal: null, low: 'low', medium: 'medium', high: null, xhigh: 'xhigh', max: null },
   contextWindow: CONTEXT_WINDOW,
+  maxTokens: MAX_OUTPUT,
 };
 
 async function exists(path) {
@@ -155,13 +157,23 @@ export async function planAssistant(assistant) {
         // The config says which format it is in; the binary is never run to ask. Anything not
         // already in the v2 shape gets v1, which OpenCode 2 still reads.
         v2 = Object.hasOwn(existing, 'providers');
-        if (v2) return [[['providers', 'callstack.ai'], OPENCODE_V2_PROVIDER]];
+        if (v2) return [
+          [['providers', 'callstack.ai', 'name'], OPENCODE_V2_PROVIDER.name],
+          [['providers', 'callstack.ai', 'package'], OPENCODE_V2_PROVIDER.package],
+          [['providers', 'callstack.ai', 'settings', 'baseURL'], BASE_URL],
+          ...Object.entries(OPENCODE_V2_PROVIDER.models[MODEL]).map(([key, value]) =>
+            [['providers', 'callstack.ai', 'models', MODEL, key], key === 'settings'
+              ? { ...existing.providers?.['callstack.ai']?.models?.[MODEL]?.settings, ...value } : value]),
+        ];
         return [
         [['provider', 'callstack.ai', 'npm'], '@ai-sdk/openai-compatible'],
         [['provider', 'callstack.ai', 'name'], 'callstack.ai'],
         [['provider', 'callstack.ai', 'options', 'baseURL'], BASE_URL],
-        ...(storedKey ? [] : [[['provider', 'callstack.ai', 'options', 'apiKey'], '{env:CALLSTACK_AUTH_TOKEN}']]),
-        [['provider', 'callstack.ai', 'models', MODEL], OPENCODE_MODEL],
+        ...(storedKey || existing.provider?.['callstack.ai']?.options?.apiKey
+          ? [] : [[['provider', 'callstack.ai', 'options', 'apiKey'], '{env:CALLSTACK_AUTH_TOKEN}']]),
+        ...Object.entries(OPENCODE_MODEL).map(([key, value]) =>
+          [['provider', 'callstack.ai', 'models', MODEL, key], key === 'options'
+            ? { ...existing.provider?.['callstack.ai']?.models?.[MODEL]?.options, ...value } : value]),
         ];
       });
       // OpenCode 2 keeps provider keys in its own store, so the key is the one step left to you.
@@ -181,7 +193,11 @@ export async function planAssistant(assistant) {
           ...(key && key !== PI_PLACEHOLDER ? [] : [[['providers', 'callstack', 'apiKey'], '$CALLSTACK_AUTH_TOKEN']]),
           // An Apex entry from an earlier setup is upgraded in place; other models keep their order.
           [['providers', 'callstack', 'models'], models.some(model => model.id === MODEL)
-            ? models.map(model => (model.id === MODEL ? PI_MODEL : model)) : [...models, PI_MODEL]],
+            ? models.map(model => (model.id === MODEL ? {
+              ...model, ...PI_MODEL,
+              ...(model.compat ? { compat: Object.fromEntries(Object.entries(model.compat)
+                .filter(([key]) => key !== 'reasoningEffortMap')) } : {}),
+            } : model)) : [...models, PI_MODEL]],
         ];
       });
       break;
@@ -191,16 +207,17 @@ export async function planAssistant(assistant) {
     case 'codex': {
       const path = join(assistant.directory, 'callstack_ai.config.toml');
       const before = await readConfig(path);
-      const after = addToml(before, {
+      const after = updateToml(before, {
         model_provider: 'callstack_ai',
         model: MODEL,
         model_context_window: CONTEXT_WINDOW,
-        model_reasoning_effort: 'medium',
+        model_auto_compact_token_limit: COMPACT_AT,
+        model_reasoning_effort: 'xhigh',
         model_providers: { callstack_ai: {
           name: 'callstack.ai', base_url: BASE_URL, env_key: 'CALLSTACK_AUTH_TOKEN',
           wire_api: 'responses', requires_openai_auth: false,
         } },
-      }, path);
+      }, path, ['model_max_output_tokens']);
       changes.push({ path, before, after, format: 'toml' });
       break;
     }
@@ -215,7 +232,7 @@ export function launchOptions(id, env = process.env) {
   switch (id) {
     case 'opencode': return { args: ['--model', `callstack.ai/${MODEL}`], env: childEnv };
     case 'codex': return { args: ['--profile', 'callstack_ai'], env: childEnv };
-    case 'pi': return { args: ['--provider', 'callstack', '--model', MODEL], env: childEnv };
+    case 'pi': return { args: ['--provider', 'callstack', '--model', MODEL, '--thinking', 'xhigh'], env: childEnv };
     case 'claude':
       for (const key of ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY']) delete childEnv[key];
       Object.assign(childEnv, {
@@ -223,6 +240,10 @@ export function launchOptions(id, env = process.env) {
         ANTHROPIC_MODEL: MODEL, CLAUDE_CODE_ATTRIBUTION_HEADER: '0',
         ANTHROPIC_DEFAULT_OPUS_MODEL: MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL: MODEL,
         ANTHROPIC_DEFAULT_HAIKU_MODEL: MODEL, CLAUDE_CODE_SUBAGENT_MODEL: MODEL,
+        CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(CONTEXT_WINDOW),
+        CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(MAX_OUTPUT),
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(COMPACT_AT),
+        CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '100',
       });
       return { args: ['--model', MODEL], env: childEnv };
     default: throw new Error(`Cannot launch ${id}. Use the editor's model selector.`);
@@ -255,9 +276,13 @@ const AI_SDK_SNIPPET = [
   `  baseURL: '${BASE_URL}',`,
   '  apiKey: process.env.CALLSTACK_AUTH_TOKEN,',
   '});',
-  `// apex('${MODEL}') with generateText / streamText.`,
+  'const requestOptions = {',
+  `  model: apex('${MODEL}'),`,
+  `  maxOutputTokens: ${MAX_OUTPUT},`,
+  '};',
+  '// Pass requestOptions with your prompt to generateText / streamText.',
   `// Reasoning effort (${EFFORTS.join(', ')}):`,
-  "// providerOptions: { callstack: { reasoningEffort: 'medium' } }",
+  "// providerOptions: { callstack: { reasoningEffort: 'xhigh' } }",
 ];
 
 export const MANUAL = {
@@ -274,6 +299,7 @@ export const MANUAL = {
     'Apex CLI never writes your key into a project. Keep it in CALLSTACK_AUTH_TOKEN (for example in a .env that git ignores) and create the provider with:',
     ...AI_SDK_SNIPPET,
     `Eve: set modelContextWindowTokens: ${CONTEXT_WINDOW} on defineAgent, or compaction will fail to compile.`,
+    `Compact history before ${COMPACT_AT} input tokens, including system instructions and tool schemas.`,
   ],
 };
 export const MANUAL_IDS = Object.keys(MANUAL);
