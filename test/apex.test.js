@@ -211,7 +211,7 @@ test('all automatic adapters configure and repeat without changing files', async
   assert.equal(codex.model, MODEL);
   assert.equal(codex.model_providers.callstack_ai.wire_api, 'responses');
   assert.equal(codex.model_context_window, 262144);
-  assert.equal(codex.model_reasoning_effort, 'xhigh');
+  assert.equal(codex.model_reasoning_effort, 'medium');
   assert.equal(codex.model_auto_compact_token_limit, 220000);
   // Codex has no output-token setting; `codex --strict-config` rejects the field outright.
   assert.ok(!('model_max_output_tokens' in codex));
@@ -239,7 +239,7 @@ test('CLI previews, applies and undoes an outdated Codex profile without changin
   const value = parseToml(await readFile(path, 'utf8'));
   assert.equal(value.model_context_window, 262144);
   assert.equal(value.model_auto_compact_token_limit, 220000);
-  assert.equal(value.model_reasoning_effort, 'xhigh');
+  assert.equal(value.model_reasoning_effort, 'medium');
   assert.equal(value.model_max_output_tokens, undefined);
   assert.equal(value.model_providers.callstack_ai.wire_api, 'responses');
   assert.equal(value.features.custom, true);
@@ -270,7 +270,7 @@ test('outdated OpenCode and Pi budgets and efforts upgrade while preserving cust
     assert.equal(provider.models.other.name, 'Other');
     assert.equal(provider.models[MODEL].custom, 2);
     assert.equal(provider.models[MODEL][settings].custom, 3);
-    assert.equal(provider.models[MODEL][settings].reasoningEffort, 'xhigh');
+    assert.equal(provider.models[MODEL][settings].reasoningEffort, 'medium');
     assert.equal(provider.models[MODEL].limit.output, 32768);
     assert.equal(provider.models[MODEL].limit.input, 220000);
     assert.ok(provider.models[MODEL].limit.input + provider.models[MODEL].limit.output < provider.models[MODEL].limit.context);
@@ -324,7 +324,7 @@ test('Pi saves the Apex thinking default for direct launches and upgrades it rev
   assert.equal(applied.status, 0, applied.stderr);
   const updated = await readFile(path, 'utf8');
   const settings = parseJson(updated);
-  assert.equal(settings.modelThinkingLevels['callstack/callstack/Apex'], 'xhigh');
+  assert.equal(settings.modelThinkingLevels['callstack/callstack/Apex'], 'medium');
   assert.equal(settings.modelThinkingLevels['other/other-model'], 'medium');
   assert.equal(settings.defaultThinkingLevel, 'low');
   assert.equal(settings.defaultProvider, 'other');
@@ -983,7 +983,7 @@ test('the closing block shows what each run command expands to, and when undo is
   assert.match(applied.stdout, at(/^Use these commands to run callstack\/Apex with your selected harnesses:$/));
   assert.match(applied.stdout, at(/^apex run opencode {2}opencode --model callstack\.ai\/callstack\/Apex$/));
   assert.match(applied.stdout, at(/^apex run codex +codex --profile callstack_ai$/));
-  assert.match(applied.stdout, at(/^apex run pi +pi --provider callstack --model callstack\/Apex --thinking xhigh$/));
+  assert.match(applied.stdout, at(/^apex run pi +pi --provider callstack --model callstack\/Apex --thinking medium$/));
   assert.match(applied.stdout, at(/^\.\.\.or pick "callstack\/Apex" from the UI when setting up manually\.$/));
   assert.match(applied.stdout, at(/^https:\/\/app\.notion\.com\/p\/callstack\/Apex-how-to-use-it-/));
   assert.match(applied.stdout, at(/^If you want to undo the changes, run apex undo$/));

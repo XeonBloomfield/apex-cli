@@ -27,7 +27,7 @@ const OPENCODE_MODEL = {
   attachment: true,
   modalities: { input: ['text', 'image'], output: ['text'] },
   limit: { context: CONTEXT_WINDOW, input: MAX_INPUT, output: MAX_OUTPUT },
-  options: { reasoningEffort: 'xhigh' },
+  options: { reasoningEffort: 'medium' },
   variants: Object.fromEntries(EFFORTS.map(effort => [effort, { reasoningEffort: effort }])),
 };
 // OpenCode 2 renamed `provider` to `providers` and moved the capability fields around.
@@ -40,7 +40,7 @@ const OPENCODE_V2_PROVIDER = {
       name: 'Apex',
       capabilities: { tools: true, input: ['text', 'image'], output: ['text'] },
       limit: { context: CONTEXT_WINDOW, input: MAX_INPUT, output: MAX_OUTPUT },
-      settings: { reasoningEffort: 'xhigh' },
+      settings: { reasoningEffort: 'medium' },
       variants: EFFORTS.map(effort => ({ id: effort, settings: { reasoningEffort: effort } })),
     },
   },
@@ -200,7 +200,7 @@ export async function planAssistant(assistant) {
             } : model)) : [...models, PI_MODEL]],
         ];
       });
-      await json('settings.json', [[['modelThinkingLevels', `callstack/${MODEL}`], 'xhigh']]);
+      await json('settings.json', [[['modelThinkingLevels', `callstack/${MODEL}`], 'medium']]);
       break;
     case 'claude':
       await json('settings.json', [[['env', 'CLAUDE_CODE_ATTRIBUTION_HEADER'], '0']]);
@@ -213,7 +213,7 @@ export async function planAssistant(assistant) {
         model: MODEL,
         model_context_window: CONTEXT_WINDOW,
         model_auto_compact_token_limit: COMPACT_AT,
-        model_reasoning_effort: 'xhigh',
+        model_reasoning_effort: 'medium',
         model_providers: { callstack_ai: {
           name: 'callstack.ai', base_url: BASE_URL, env_key: 'CALLSTACK_AUTH_TOKEN',
           wire_api: 'responses', requires_openai_auth: false,
@@ -233,7 +233,7 @@ export function launchOptions(id, env = process.env) {
   switch (id) {
     case 'opencode': return { args: ['--model', `callstack.ai/${MODEL}`], env: childEnv };
     case 'codex': return { args: ['--profile', 'callstack_ai'], env: childEnv };
-    case 'pi': return { args: ['--provider', 'callstack', '--model', MODEL, '--thinking', 'xhigh'], env: childEnv };
+    case 'pi': return { args: ['--provider', 'callstack', '--model', MODEL, '--thinking', 'medium'], env: childEnv };
     case 'claude':
       for (const key of ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY']) delete childEnv[key];
       Object.assign(childEnv, {
@@ -283,7 +283,7 @@ const AI_SDK_SNIPPET = [
   '};',
   '// Pass requestOptions with your prompt to generateText / streamText.',
   `// Reasoning effort (${EFFORTS.join(', ')}):`,
-  "// providerOptions: { callstack: { reasoningEffort: 'xhigh' } }",
+  "// providerOptions: { callstack: { reasoningEffort: 'medium' } }",
 ];
 
 export const MANUAL = {
