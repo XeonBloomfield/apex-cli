@@ -211,7 +211,7 @@ test('all automatic adapters configure and repeat without changing files', async
   const codex = parseToml(await readFile(join(paths.codex, 'callstack_ai.config.toml'), 'utf8'));
   assert.equal(codex.model, MODEL);
   assert.equal(codex.model_providers.callstack_ai.wire_api, 'responses');
-  assert.equal(codex.model_context_window, undefined);
+  assert.equal(codex.model_context_window, 262144);
   assert.equal(codex.model_reasoning_effort, 'medium');
   assert.equal(codex.model_auto_compact_token_limit, undefined);
   // Codex has no output-token setting; `codex --strict-config` rejects the field outright.
@@ -219,12 +219,12 @@ test('all automatic adapters configure and repeat without changing files', async
   const opencode = parseJson(await readFile(join(paths.opencode, 'opencode.json'), 'utf8'));
   const apex = opencode.provider['callstack.ai'].models[MODEL];
   assert.equal(apex.tool_call, true);
-  assert.deepEqual(apex.limit, { output: 32768 });
+  assert.deepEqual(apex.limit, { context: 262144, output: 32768 });
   assert.deepEqual(Object.keys(apex.variants), ['none', 'low', 'medium', 'xhigh']);
   const pi = parseJson(await readFile(join(paths.pi, 'models.json'), 'utf8'));
   assert.equal(pi.providers.callstack.apiKey, '$CALLSTACK_AUTH_TOKEN');
   assert.equal(pi.providers.callstack.models[0].maxTokens, 32768);
-  assert.equal(pi.providers.callstack.models[0].contextWindow, undefined);
+  assert.equal(pi.providers.callstack.models[0].contextWindow, 262144);
 });
 
 test('CLI previews, applies and undoes an outdated Codex profile without changing base config', async context => {
@@ -240,7 +240,7 @@ test('CLI previews, applies and undoes an outdated Codex profile without changin
   const applied = cli(['init', '--assistants', 'codex', '--apply'], env);
   assert.equal(applied.status, 0, applied.stderr);
   const value = parseToml(await readFile(path, 'utf8'));
-  assert.equal(value.model_context_window, undefined);
+  assert.equal(value.model_context_window, 262144);
   assert.equal(value.model_auto_compact_token_limit, undefined);
   assert.equal(value.model_reasoning_effort, 'medium');
   assert.equal(value.model_max_output_tokens, undefined);
@@ -275,7 +275,7 @@ test('outdated OpenCode and Pi budgets and efforts upgrade while preserving cust
     assert.equal(provider.models[MODEL][settings].custom, 3);
     assert.equal(provider.models[MODEL][settings].reasoningEffort, 'medium');
     assert.equal(provider.models[MODEL].limit.output, 32768);
-    assert.deepEqual(provider.models[MODEL].limit, { output: 32768 });
+    assert.deepEqual(provider.models[MODEL].limit, { context: 262144, output: 32768 });
     assert.deepEqual(v2 ? provider.models[MODEL].variants.map(v => v.id) : Object.keys(provider.models[MODEL].variants), ['none', 'low', 'medium', 'xhigh']);
     await writeChange(change);
     const [repeat] = await planAssistant({ id: 'opencode', directory });
@@ -290,22 +290,22 @@ test('outdated OpenCode and Pi budgets and efforts upgrade while preserving cust
   assert.equal(provider.apiKey, 'stored');
   assert.equal(provider.models[0].maxTokens, 32768);
   assert.equal(provider.models[0].custom, true);
-  assert.equal(provider.models[0].contextWindow, undefined);
+  assert.equal(provider.models[0].contextWindow, 262144);
   assert.deepEqual(provider.models[0].compat, { supportsStore: false });
   assert.equal(provider.models[0].thinkingLevelMap.minimal, null);
   assert.equal(provider.models[0].thinkingLevelMap.max, null);
   assert.equal(provider.models[0].thinkingLevelMap.off, 'none');
 });
 
-test('CLI removes previous OpenCode and Pi context sizes with preview, repeat and undo', async context => {
+test('CLI upgrades context metadata to official model limits with preview, repeat and undo', async context => {
   const { env } = await fixture(context);
   const originals = {
     opencode: JSON.stringify({ provider: { 'callstack.ai': { models: {
-      [MODEL]: { limit: { context: 262144, input: 220000, output: 32768 } },
+      [MODEL]: { limit: { output: 32768 } },
       other: { limit: { context: 1000000 } },
     } } } }),
     pi: JSON.stringify({ providers: { callstack: { models: [
-      { id: MODEL, contextWindow: 262144, maxTokens: 32768 },
+      { id: MODEL, maxTokens: 32768 },
       { id: 'other', contextWindow: 1000000 },
     ] } } }),
   };
@@ -317,10 +317,10 @@ test('CLI removes previous OpenCode and Pi context sizes with preview, repeat an
   const upgraded = {};
   for (const id of Object.keys(originals)) upgraded[id] = await readFile(configPath(env, id), 'utf8');
   const opencode = parseJson(upgraded.opencode).provider['callstack.ai'].models;
-  assert.deepEqual(opencode[MODEL].limit, { output: 32768 });
+  assert.deepEqual(opencode[MODEL].limit, { context: 262144, output: 32768 });
   assert.equal(opencode.other.limit.context, 1000000);
   const pi = parseJson(upgraded.pi).providers.callstack.models;
-  assert.equal(pi[0].contextWindow, undefined);
+  assert.equal(pi[0].contextWindow, 262144);
   assert.equal(pi[0].maxTokens, 32768);
   assert.equal(pi[1].contextWindow, 1000000);
   assert.equal(cli([...args, '--apply'], env).status, 0);
@@ -342,7 +342,7 @@ test('Pi keeps other providers and models', async context => {
   // An Apex entry from an earlier setup is upgraded in place, next to models it does not own.
   const models = value.providers.callstack.models;
   assert.deepEqual(models.map(model => model.id), ['legacy', MODEL, 'later']);
-  assert.equal(models[1].contextWindow, undefined);
+  assert.equal(models[1].contextWindow, 262144);
   assert.equal(models[1].reasoning, true);
 });
 
@@ -447,11 +447,13 @@ test('launch config scopes Claude credentials without mutating parent environmen
   assert.equal(launched.env.CLAUDE_CODE_USE_BEDROCK, undefined);
   assert.equal(env.ANTHROPIC_API_KEY, 'old');
   assert.equal(launched.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS, '32768');
-  assert.equal(launched.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, env.CLAUDE_CODE_MAX_CONTEXT_TOKENS);
+  assert.equal(launched.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '262144');
+  assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '1000000');
   assert.equal(launched.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, env.CLAUDE_CODE_AUTO_COMPACT_WINDOW);
   assert.equal(launched.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE);
   const fresh = launchOptions('claude', { CALLSTACK_AUTH_TOKEN: 'secret' }).env;
-  for (const key of ['CLAUDE_CODE_MAX_CONTEXT_TOKENS', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE']) {
+  assert.equal(fresh.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '262144');
+  for (const key of ['CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE']) {
     assert.equal(fresh[key], undefined);
   }
   assert.equal(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS, '131072');
@@ -729,6 +731,9 @@ test('manual steps come after the diff, and their snippets never lose their shap
   const plan = result.stdout.indexOf('Planned changes:');
   const manual = result.stdout.indexOf('Manual setup for');
   assert.ok(plan >= 0 && manual > plan, result.stdout);
+  assert.match(result.stdout, /"contextWindow": 262144/);
+  assert.match(result.stdout, /"maxOutputTokens": 32768/);
+  assert.doesNotMatch(result.stdout, /"maxInputTokens"/);
   // The model object is one key per line, so it survives a narrow terminal as valid JSON.
   for (const key of ['"id"', '"url"', '"toolCalling"', '"vision"']) {
     assert.match(result.stdout, new RegExp(`^ +${key}: `, 'm'), result.stdout);

@@ -156,13 +156,31 @@ their own backup first, so an undo is itself reversible. Apex CLI records each b
 Apex configs declare tool calling, image input, and the supported
 `none`/`low`/`medium`/`xhigh` reasoning efforts (default `medium`) where supported.
 OpenCode, Pi, Copilot, Claude's launcher, and the AI SDK guidance retain a 32,768-token output
-budget. Apex CLI leaves context windows, input limits, and compaction thresholds to each harness.
+budget. OpenCode, Pi, Codex, Copilot, and Claude's launcher declare the model's native
+262,144-token context window using each app's documented fields. Input limits and compaction
+thresholds use the harness defaults; Apex CLI does not set a separate input budget or compaction
+reserve.
 Pi's per-model default applies to fresh direct launches and model selection; `apex run pi` also
 selects `medium` explicitly. Resumed Pi sessions retain their saved thinking level.
 
+The gateway model ID, authentication, `medium` default, and `off` → `none` translation remain
+Callstack-specific.
+
+| Harness | Context field | Output field | Official reference |
+| --- | --- | --- | --- |
+| OpenCode | `limit.context` | `limit.output` | [Custom providers](https://opencode.ai/docs/providers/) |
+| Pi | `contextWindow` | `maxTokens` | [Custom models](https://pi.dev/docs/latest/models) |
+| Codex | `model_context_window` | No output-limit config key | [OpenAI configuration reference](https://developers.openai.com/codex/config-reference/) |
+| Claude Code launcher | `CLAUDE_CODE_MAX_CONTEXT_TOKENS` | `CLAUDE_CODE_MAX_OUTPUT_TOKENS` | [Environment variables](https://code.claude.com/docs/en/env-vars) |
+| VS Code / Copilot | `contextWindow` | `maxOutputTokens` | [Custom endpoint models](https://code.visualstudio.com/docs/agent-customization/language-models) |
+
+The Claude launcher sets context/output limits only in the child process and does not set compaction
+window or percentage controls. Pi retains its native compaction settings. The AI SDK
+snippet sets the output budget without inventing a context-window option.
+
 Run `apex init` again after updating the CLI to preview upgrades to an existing Apex setup; pass
-`--apply` to save them. Old context windows, input limits, and compaction overrides are removed from Apex entries;
-output limits and reasoning mappings are updated in place.
+`--apply` to save them. Apex context/output metadata and reasoning mappings are updated in place. Older OpenCode input
+limits and Codex compaction overrides are removed so each harness uses its own compaction defaults.
 Codex's obsolete `model_max_output_tokens` key from older Apex versions is removed, and its dedicated
 profile becomes self-contained. Unrelated settings, models, credentials and comments are preserved;
 the ordinary backups and `apex undo` also cover upgrades. `none` remains supported: the gateway
