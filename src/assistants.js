@@ -15,10 +15,7 @@ export const NAMES = {
 export const RUNNABLE = ['codex', 'claude', 'opencode', 'pi'];
 
 // What Apex can do, declared in each tool's own vocabulary wherever the tool has one.
-const CONTEXT_WINDOW = 262144;
-const MAX_INPUT = 220000;
 const MAX_OUTPUT = 32768;
-const COMPACT_AT = 220000;
 const EFFORTS = ['none', 'low', 'medium', 'xhigh'];
 const OPENCODE_MODEL = {
   name: 'Apex',
@@ -26,7 +23,7 @@ const OPENCODE_MODEL = {
   tool_call: true,
   attachment: true,
   modalities: { input: ['text', 'image'], output: ['text'] },
-  limit: { context: CONTEXT_WINDOW, input: MAX_INPUT, output: MAX_OUTPUT },
+  limit: { output: MAX_OUTPUT },
   options: { reasoningEffort: 'medium' },
   variants: Object.fromEntries(EFFORTS.map(effort => [effort, { reasoningEffort: effort }])),
 };
@@ -39,7 +36,7 @@ const OPENCODE_V2_PROVIDER = {
     [MODEL]: {
       name: 'Apex',
       capabilities: { tools: true, input: ['text', 'image'], output: ['text'] },
-      limit: { context: CONTEXT_WINDOW, input: MAX_INPUT, output: MAX_OUTPUT },
+      limit: { output: MAX_OUTPUT },
       settings: { reasoningEffort: 'medium' },
       variants: EFFORTS.map(effort => ({ id: effort, settings: { reasoningEffort: effort } })),
     },
@@ -50,7 +47,6 @@ const PI_MODEL = {
   reasoning: true,
   input: ['text', 'image'],
   thinkingLevelMap: { off: 'none', minimal: null, low: 'low', medium: 'medium', high: null, xhigh: 'xhigh', max: null },
-  contextWindow: CONTEXT_WINDOW,
   maxTokens: MAX_OUTPUT,
 };
 
@@ -194,7 +190,7 @@ export async function planAssistant(assistant) {
           // An Apex entry from an earlier setup is upgraded in place; other models keep their order.
           [['providers', 'callstack', 'models'], models.some(model => model.id === MODEL)
             ? models.map(model => (model.id === MODEL ? {
-              ...model, ...PI_MODEL,
+              ...Object.fromEntries(Object.entries(model).filter(([key]) => key !== 'contextWindow')), ...PI_MODEL,
               ...(model.compat ? { compat: Object.fromEntries(Object.entries(model.compat)
                 .filter(([key]) => key !== 'reasoningEffortMap')) } : {}),
             } : model)) : [...models, PI_MODEL]],
@@ -211,14 +207,12 @@ export async function planAssistant(assistant) {
       const after = updateToml(before, {
         model_provider: 'callstack_ai',
         model: MODEL,
-        model_context_window: CONTEXT_WINDOW,
-        model_auto_compact_token_limit: COMPACT_AT,
         model_reasoning_effort: 'medium',
         model_providers: { callstack_ai: {
           name: 'callstack.ai', base_url: BASE_URL, env_key: 'CALLSTACK_AUTH_TOKEN',
           wire_api: 'responses', requires_openai_auth: false,
         } },
-      }, path, ['model_max_output_tokens']);
+      }, path, ['model_max_output_tokens', 'model_context_window', 'model_auto_compact_token_limit']);
       changes.push({ path, before, after, format: 'toml' });
       break;
     }
@@ -241,10 +235,7 @@ export function launchOptions(id, env = process.env) {
         ANTHROPIC_MODEL: MODEL, CLAUDE_CODE_ATTRIBUTION_HEADER: '0',
         ANTHROPIC_DEFAULT_OPUS_MODEL: MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL: MODEL,
         ANTHROPIC_DEFAULT_HAIKU_MODEL: MODEL, CLAUDE_CODE_SUBAGENT_MODEL: MODEL,
-        CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(CONTEXT_WINDOW),
         CLAUDE_CODE_MAX_OUTPUT_TOKENS: String(MAX_OUTPUT),
-        CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(COMPACT_AT),
-        CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '100',
       });
       return { args: ['--model', MODEL], env: childEnv };
     default: throw new Error(`Cannot launch ${id}. Use the editor's model selector.`);
@@ -264,7 +255,7 @@ export function runExpansion(id) {
 // wraps into the gutter loses its shape.
 const COPILOT_MODEL = JSON.stringify({
   id: MODEL, name: 'Apex', url: BASE_URL, toolCalling: true, vision: true, thinking: true,
-  contextWindow: CONTEXT_WINDOW, maxOutputTokens: MAX_OUTPUT,
+  maxOutputTokens: MAX_OUTPUT,
   supportsReasoningEffort: EFFORTS, reasoningEffortFormat: 'chat-completions',
 }, null, 2);
 
@@ -299,8 +290,6 @@ export const MANUAL = {
   'ai-sdk': [
     'Apex CLI never writes your key into a project. Keep it in CALLSTACK_AUTH_TOKEN (for example in a .env that git ignores) and create the provider with:',
     ...AI_SDK_SNIPPET,
-    `Eve: set modelContextWindowTokens: ${CONTEXT_WINDOW} on defineAgent, or compaction will fail to compile.`,
-    `Compact history before ${COMPACT_AT} input tokens, including system instructions and tool schemas.`,
   ],
 };
 export const MANUAL_IDS = Object.keys(MANUAL);

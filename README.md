@@ -151,22 +151,18 @@ their own backup first, so an undo is itself reversible. Apex CLI records each b
 | Pi | `~/.pi/agent/models.json` and `settings.json` | Adds `providers.callstack` with Chat Completions, Apex and `$CALLSTACK_AUTH_TOKEN`; saves `medium` as Apex's per-model thinking default for direct launches. Preserves other models and their defaults. Requires a Pi version supporting `$VAR` key interpolation and `modelThinkingLevels`. |
 | Cursor | Guided setup | Prints endpoint, API-key and custom-model steps; does not modify private editor storage. |
 | VS Code / Copilot | Guided setup | Detects VS Code, not whether Copilot is installed; prints custom-endpoint steps and model JSON, retaining the editor-generated secret reference. |
-| Vercel AI SDK / Eve | Guided setup | Detected from the `package.json` in the directory you run Apex CLI from (`ai`, `@ai-sdk/openai` or `eve`); prints the connector snippet, which reads the key from `CALLSTACK_AUTH_TOKEN`, and the Eve context-window setting. Nothing is written into the project. |
+| Vercel AI SDK / Eve | Guided setup | Detected from the `package.json` in the directory you run Apex CLI from (`ai`, `@ai-sdk/openai` or `eve`); prints the connector snippet, which reads the key from `CALLSTACK_AUTH_TOKEN`. Nothing is written into the project. |
 
-OpenCode, Pi, Codex and the Copilot model JSON also declare what Apex can do, in each tool's own
-fields: a 262,144-token context window, 32,768 output tokens, tool calling, image input, and the
-`none`/`low`/`medium`/`xhigh` reasoning efforts (default `medium`). Pi's per-model default applies to
-fresh direct launches and model selection; `apex run pi` also selects `medium` explicitly. Resumed Pi
-sessions retain their saved thinking level. Cursor and Claude Code have no
-model JSON fields for these limits. `apex run claude` supplies the context and output limits through
-Claude Code's environment variables and sets a 220,000-token auto-compaction window. Codex profiles
-explicitly compact at 220,000 tokens. The AI SDK guidance includes the 32,768-token output budget
-and advises compacting history before 220,000 input tokens, including system instructions and tools.
-OpenCode's input budget is 220,000 tokens, leaving room for the full output reservation and
-9,376 tokens of headroom within the context window.
+Apex configs declare tool calling, image input, and the supported
+`none`/`low`/`medium`/`xhigh` reasoning efforts (default `medium`) where supported.
+OpenCode, Pi, Copilot, Claude's launcher, and the AI SDK guidance retain a 32,768-token output
+budget. Apex CLI leaves context windows, input limits, and compaction thresholds to each harness.
+Pi's per-model default applies to fresh direct launches and model selection; `apex run pi` also
+selects `medium` explicitly. Resumed Pi sessions retain their saved thinking level.
 
 Run `apex init` again after updating the CLI to preview upgrades to an existing Apex setup; pass
-`--apply` to save them. Old context/output limits and reasoning mappings are updated in place.
+`--apply` to save them. Old context windows, input limits, and compaction overrides are removed from Apex entries;
+output limits and reasoning mappings are updated in place.
 Codex's obsolete `model_max_output_tokens` key from older Apex versions is removed, and its dedicated
 profile becomes self-contained. Unrelated settings, models, credentials and comments are preserved;
 the ordinary backups and `apex undo` also cover upgrades. `none` remains supported: the gateway
