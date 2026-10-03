@@ -148,15 +148,29 @@ their own backup first, so an undo is itself reversible. Apex CLI records each b
 | OpenCode | `~/.config/opencode/opencode.json` or `.jsonc` | Adds `provider.callstack.ai`, OpenAI-compatible transport, model and environment-key reference; preserves the default model. A config already in OpenCode 2's `providers` format gets the v2 entry instead, and you add the key with `/connect`. |
 | Codex 0.134.0+ | `~/.codex/callstack_ai.config.toml` | Adds a self-contained Responses API provider/profile; leaves base config and default model untouched. |
 | Claude Code | `~/.claude/settings.json` | Merges attribution flag only; use `apex run claude` for gateway credentials and model selection. |
-| Pi | `~/.pi/agent/models.json` | Adds `providers.callstack` with Chat Completions, Apex and `$CALLSTACK_AUTH_TOKEN`; preserves other models. Requires a Pi version supporting `$VAR` key interpolation. |
+| Pi | `~/.pi/agent/models.json` and `settings.json` | Adds `providers.callstack` with Chat Completions, Apex and `$CALLSTACK_AUTH_TOKEN`; saves `medium` as Apex's per-model thinking default for direct launches. Preserves other models and their defaults. Requires a Pi version supporting `$VAR` key interpolation and `modelThinkingLevels`. |
 | Cursor | Guided setup | Prints endpoint, API-key and custom-model steps; does not modify private editor storage. |
 | VS Code / Copilot | Guided setup | Detects VS Code, not whether Copilot is installed; prints custom-endpoint steps and model JSON, retaining the editor-generated secret reference. |
 | Vercel AI SDK / Eve | Guided setup | Detected from the `package.json` in the directory you run Apex CLI from (`ai`, `@ai-sdk/openai` or `eve`); prints the connector snippet, which reads the key from `CALLSTACK_AUTH_TOKEN`, and the Eve context-window setting. Nothing is written into the project. |
 
 OpenCode, Pi, Codex and the Copilot model JSON also declare what Apex can do, in each tool's own
-fields: a 262,144-token context window, 16,384 output tokens, tool calling, image input, and the
-`none`/`low`/`medium`/`xhigh` reasoning efforts (default `medium`). Cursor and Claude Code have no
-such fields for a custom model.
+fields: a 262,144-token context window, 32,768 output tokens, tool calling, image input, and the
+`none`/`low`/`medium`/`xhigh` reasoning efforts (default `medium`). Pi's per-model default applies to
+fresh direct launches and model selection; `apex run pi` also selects `medium` explicitly. Resumed Pi
+sessions retain their saved thinking level. Cursor and Claude Code have no
+model JSON fields for these limits. `apex run claude` supplies the context and output limits through
+Claude Code's environment variables and sets a 220,000-token auto-compaction window. Codex profiles
+explicitly compact at 220,000 tokens. The AI SDK guidance includes the 32,768-token output budget
+and advises compacting history before 220,000 input tokens, including system instructions and tools.
+OpenCode's input budget is 220,000 tokens, leaving room for the full output reservation and
+9,376 tokens of headroom within the context window.
+
+Run `apex init` again after updating the CLI to preview upgrades to an existing Apex setup; pass
+`--apply` to save them. Old context/output limits and reasoning mappings are updated in place.
+Codex's obsolete `model_max_output_tokens` key from older Apex versions is removed, and its dedicated
+profile becomes self-contained. Unrelated settings, models, credentials and comments are preserved;
+the ordinary backups and `apex undo` also cover upgrades. `none` remains supported: the gateway
+translates it to thinking off.
 
 Respects `XDG_CONFIG_HOME`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `PI_CODING_AGENT_DIR`,
 `XDG_STATE_HOME`/`APEX_STATE_DIR`, and Windows `APPDATA`. Project-specific settings and custom
@@ -201,9 +215,11 @@ Apex CLI will not break what you already have.
 How that works underneath:
 
 - Previews print paths and key/value changes, never secrets.
-- All selected configurations are parsed before any write. Malformed files, conflicting Codex
-  profile keys and symlinked files or directories are refused, and one bad assistant blocks the
+- All selected configurations are parsed before any write. Malformed files and symlinked files or
+  directories are refused, and one bad assistant blocks the
   whole batch instead of half-applying it.
+- The dedicated Codex Apex profile's owned keys are upgraded rather than rejected as conflicts;
+  the base `config.toml` and other profiles remain untouched.
 - JSON/JSONC edits preserve comments and unrelated keys. The Callstack endpoint is set to the
   documented one. A key the assistant already has (in OpenCode's own key store, or in Pi's
   `models.json`, where Apex CLI 0.2 put them) is kept, so upgrading never leaves an assistant

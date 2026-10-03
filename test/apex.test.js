@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { parse as parseToml } from 'smol-toml';
 import { detect, locations, planAssistant, launchOptions, MODEL } from '../src/assistants.js';
-import { addToml, editJson, parseJson, readConfig, sha256, writeChange } from '../src/config.js';
+import { addToml, updateToml, editJson, parseJson, readConfig, sha256, writeChange } from '../src/config.js';
 import { diffValues, unifiedDiff } from '../src/diff.js';
 import { isSecretKey, redactText } from '../src/secrets.js';
 import { journalPath, markUndone } from '../src/journal.js';
@@ -107,6 +107,27 @@ test('value diffs describe added, replaced and removed settings for both formats
     [{ op: 'add', key: 't.k', value: true }]);
 });
 
+test('TOML upgrades preserve comments, quoted keys, multiline values and unrelated providers', () => {
+  const before = '# keep\r\n"model" = "old # inside" # model comment\r\nmodel_max_output_tokens = 65536\r\nmodel_reasoning_effort = """\r\nmax\r\n"""\r\n[model_providers."callstack_ai"] # provider comment\r\nbase_url = "https://old.example/v1" # URL comment\r\ncustom = "keep"\r\n[model_providers.other]\r\nname = "Other"\r\n';
+  const desired = { model: MODEL, model_reasoning_effort: 'medium', model_auto_compact_token_limit: 220000,
+    model_providers: { callstack_ai: { base_url: 'https://api.callstack.ai/v1', wire_api: 'responses' } } };
+  const after = updateToml(before, desired, 'test', ['model_max_output_tokens']);
+  const value = parseToml(after);
+  assert.equal(value.model, MODEL);
+  assert.equal(value.model_reasoning_effort, 'medium');
+  assert.equal(value.model_max_output_tokens, undefined);
+  assert.equal(value.model_providers.callstack_ai.custom, 'keep');
+  assert.equal(value.model_providers.callstack_ai.wire_api, 'responses');
+  assert.deepEqual(value.model_providers.other, { name: 'Other' });
+  for (const comment of ['# keep', '# model comment', '# provider comment', '# URL comment']) assert.ok(after.includes(comment));
+  assert.ok(!after.replaceAll('\r\n', '').includes('\n'));
+  assert.equal(updateToml(after, desired, 'test', ['model_max_output_tokens']), after);
+  const inline = updateToml('model_providers = { callstack_ai = { base_url = "old", custom = 1 }, other = { name = "Other" } }\n', desired, 'test');
+  assert.equal(parseToml(inline).model_providers.callstack_ai.custom, 1);
+  assert.equal(parseToml(inline).model_providers.other.name, 'Other');
+  assert.throws(() => updateToml('model = [', desired, 'test'), /Invalid TOML/);
+});
+
 test('secret-looking keys are detected in camelCase, snake_case and dotted paths', () => {
   for (const key of ['apiKey', 'api_key', 'env_key', 'auth', 'providers.x.apiKey', 'ANTHROPIC_AUTH_TOKEN', 'client-secret']) {
     assert.equal(isSecretKey(key), true, key);
@@ -191,6 +212,7 @@ test('all automatic adapters configure and repeat without changing files', async
   assert.equal(codex.model_providers.callstack_ai.wire_api, 'responses');
   assert.equal(codex.model_context_window, 262144);
   assert.equal(codex.model_reasoning_effort, 'medium');
+  assert.equal(codex.model_auto_compact_token_limit, 220000);
   // Codex has no output-token setting; `codex --strict-config` rejects the field outright.
   assert.ok(!('model_max_output_tokens' in codex));
   const opencode = parseJson(await readFile(join(paths.opencode, 'opencode.json'), 'utf8'));
@@ -199,6 +221,77 @@ test('all automatic adapters configure and repeat without changing files', async
   assert.deepEqual(Object.keys(apex.variants), ['none', 'low', 'medium', 'xhigh']);
   const pi = parseJson(await readFile(join(paths.pi, 'models.json'), 'utf8'));
   assert.equal(pi.providers.callstack.apiKey, '$CALLSTACK_AUTH_TOKEN');
+  assert.equal(pi.providers.callstack.models[0].maxTokens, 32768);
+});
+
+test('CLI previews, applies and undoes an outdated Codex profile without changing base config', async context => {
+  const { env } = await fixture(context);
+  const base = '# default stays\nmodel = "other"\n[model_providers.callstack_ai]\nwire_api = "chat"\n';
+  await mkdir(env.CODEX_HOME, { recursive: true });
+  await writeFile(join(env.CODEX_HOME, 'config.toml'), base);
+  const old = '# old Apex profile\nmodel = "callstack/Apex"\nmodel_provider = "callstack_ai"\nmodel_context_window = 1000000\nmodel_max_output_tokens = 65536\nmodel_reasoning_effort = "max"\n[features]\ncustom = true\n';
+  const path = await writeConfig(env, 'codex', old);
+  const preview = cli(['init', '--assistants', 'codex', '--no-interactive', '--json'], env);
+  assert.equal(preview.status, 0, preview.stderr);
+  assert.equal(await readFile(path, 'utf8'), old);
+  const applied = cli(['init', '--assistants', 'codex', '--apply'], env);
+  assert.equal(applied.status, 0, applied.stderr);
+  const value = parseToml(await readFile(path, 'utf8'));
+  assert.equal(value.model_context_window, 262144);
+  assert.equal(value.model_auto_compact_token_limit, 220000);
+  assert.equal(value.model_reasoning_effort, 'medium');
+  assert.equal(value.model_max_output_tokens, undefined);
+  assert.equal(value.model_providers.callstack_ai.wire_api, 'responses');
+  assert.equal(value.features.custom, true);
+  assert.equal(await readFile(join(env.CODEX_HOME, 'config.toml'), 'utf8'), base);
+  const upgraded = await readFile(path, 'utf8');
+  assert.equal(cli(['init', '--assistants', 'codex', '--apply'], env).status, 0);
+  assert.equal(await readFile(path, 'utf8'), upgraded);
+  assert.equal(cli(['undo', '--apply'], env).status, 0);
+  assert.equal(await readFile(path, 'utf8'), old);
+});
+
+test('outdated OpenCode and Pi budgets and efforts upgrade while preserving custom settings', async context => {
+  const { home, env } = await fixture(context);
+  for (const v2 of [false, true]) {
+    const directory = locations(home, env).opencode;
+    const root = v2 ? 'providers' : 'provider';
+    const settings = v2 ? 'settings' : 'options';
+    const old = { theme: 'dark', [root]: { 'callstack.ai': { custom: true, [settings]: { apiKey: 'stored', custom: 1 }, models: {
+      other: { name: 'Other' }, [MODEL]: { custom: 2, limit: { context: 1000000, output: 65536 },
+        [settings]: { reasoningEffort: 'minimal', custom: 3 }, variants: v2 ? [{ id: 'max' }] : { max: { reasoningEffort: 'max' } } },
+    } } } };
+    await writeConfig(env, 'opencode', JSON.stringify(old));
+    const [change] = await planAssistant({ id: 'opencode', directory });
+    const provider = parseJson(change.after)[root]['callstack.ai'];
+    assert.equal(provider.custom, true);
+    assert.equal(provider[settings].custom, 1);
+    assert.equal(provider[settings].apiKey, 'stored');
+    assert.equal(provider.models.other.name, 'Other');
+    assert.equal(provider.models[MODEL].custom, 2);
+    assert.equal(provider.models[MODEL][settings].custom, 3);
+    assert.equal(provider.models[MODEL][settings].reasoningEffort, 'medium');
+    assert.equal(provider.models[MODEL].limit.output, 32768);
+    assert.equal(provider.models[MODEL].limit.input, 220000);
+    assert.ok(provider.models[MODEL].limit.input + provider.models[MODEL].limit.output < provider.models[MODEL].limit.context);
+    assert.deepEqual(v2 ? provider.models[MODEL].variants.map(v => v.id) : Object.keys(provider.models[MODEL].variants), ['none', 'low', 'medium', 'xhigh']);
+    await writeChange(change);
+    const [repeat] = await planAssistant({ id: 'opencode', directory });
+    assert.equal(repeat.before, repeat.after);
+  }
+  const directory = locations(home, env).pi;
+  await writeConfig(env, 'pi', JSON.stringify({ providers: { callstack: { apiKey: 'stored', models: [
+    { id: MODEL, maxTokens: 131072, custom: true, compat: { supportsStore: false, reasoningEffortMap: { minimal: 'minimal' } } },
+  ] } } }));
+  const [change] = await planAssistant({ id: 'pi', directory });
+  const provider = parseJson(change.after).providers.callstack;
+  assert.equal(provider.apiKey, 'stored');
+  assert.equal(provider.models[0].maxTokens, 32768);
+  assert.equal(provider.models[0].custom, true);
+  assert.deepEqual(provider.models[0].compat, { supportsStore: false });
+  assert.equal(provider.models[0].thinkingLevelMap.minimal, null);
+  assert.equal(provider.models[0].thinkingLevelMap.max, null);
+  assert.equal(provider.models[0].thinkingLevelMap.off, 'none');
 });
 
 test('Pi keeps other providers and models', async context => {
@@ -216,6 +309,31 @@ test('Pi keeps other providers and models', async context => {
   assert.deepEqual(models.map(model => model.id), ['legacy', MODEL, 'later']);
   assert.equal(models[1].contextWindow, 262144);
   assert.equal(models[1].reasoning, true);
+});
+
+test('Pi saves the Apex thinking default for direct launches and upgrades it reversibly', async context => {
+  const { env } = await fixture(context);
+  const path = join(env.PI_CODING_AGENT_DIR, 'settings.json');
+  const original = '{\n // keep this\n "defaultProvider": "other", "defaultModel": "other-model",\n "defaultThinkingLevel": "low",\n "modelThinkingLevels": {"callstack/callstack/Apex": "off", "other/other-model": "medium"}\n}\n';
+  await mkdir(env.PI_CODING_AGENT_DIR, { recursive: true });
+  await writeFile(path, original);
+  const preview = cli(['init', '--assistants', 'pi', '--no-interactive'], env);
+  assert.equal(preview.status, 0, preview.stderr);
+  assert.equal(await readFile(path, 'utf8'), original);
+  const applied = cli(['init', '--assistants', 'pi', '--apply'], env);
+  assert.equal(applied.status, 0, applied.stderr);
+  const updated = await readFile(path, 'utf8');
+  const settings = parseJson(updated);
+  assert.equal(settings.modelThinkingLevels['callstack/callstack/Apex'], 'medium');
+  assert.equal(settings.modelThinkingLevels['other/other-model'], 'medium');
+  assert.equal(settings.defaultThinkingLevel, 'low');
+  assert.equal(settings.defaultProvider, 'other');
+  assert.equal(settings.defaultModel, 'other-model');
+  assert.match(updated, /keep this/);
+  assert.equal(cli(['init', '--assistants', 'pi', '--apply'], env).status, 0);
+  assert.equal(await readFile(path, 'utf8'), updated);
+  assert.equal(cli(['undo', '--apply'], env).status, 0);
+  assert.equal(await readFile(path, 'utf8'), original);
 });
 
 test('upgrading from 0.2 keeps the keys it stored, so nobody is left sending no key', async context => {
@@ -285,12 +403,19 @@ test('symlink files and parent directories are refused', async context => {
 });
 
 test('launch config scopes Claude credentials without mutating parent environment', () => {
-  const env = { CALLSTACK_AUTH_TOKEN: 'secret', ANTHROPIC_API_KEY: 'old', CLAUDE_CODE_USE_BEDROCK: '1' };
+  const env = { CALLSTACK_AUTH_TOKEN: 'secret', ANTHROPIC_API_KEY: 'old', CLAUDE_CODE_USE_BEDROCK: '1',
+    CLAUDE_CODE_MAX_OUTPUT_TOKENS: '131072', CLAUDE_CODE_MAX_CONTEXT_TOKENS: '1000000',
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000', CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: '99' };
   const launched = launchOptions('claude', env);
   assert.equal(launched.env.ANTHROPIC_AUTH_TOKEN, 'secret');
   assert.equal(launched.env.ANTHROPIC_API_KEY, undefined);
   assert.equal(launched.env.CLAUDE_CODE_USE_BEDROCK, undefined);
   assert.equal(env.ANTHROPIC_API_KEY, 'old');
+  assert.equal(launched.env.CLAUDE_CODE_MAX_OUTPUT_TOKENS, '32768');
+  assert.equal(launched.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, '262144');
+  assert.equal(launched.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW, '220000');
+  assert.equal(launched.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, '100');
+  assert.equal(env.CLAUDE_CODE_MAX_OUTPUT_TOKENS, '131072');
   assert.deepEqual(launchOptions('codex', env).args, ['--profile', 'callstack_ai']);
   assert.deepEqual(launchOptions('opencode', env).args, ['--model', 'callstack.ai/callstack/Apex']);
   assert.throws(() => launchOptions('pi', {}), /CALLSTACK_AUTH_TOKEN/);
@@ -418,13 +543,13 @@ test('CLI applies once, repeats cleanly and writes a private journal', async con
   assert.match(applied.stdout, /backup: [a-z.]+apex-backup-[0-9a-f]{8}/);
   assert.equal((await stat(journal)).mode & 0o777, 0o600);
   const entries = JSON.parse(await readFile(journal, 'utf8'));
-  assert.equal(entries.length, 4);
-  assert.equal(entries.filter(entry => entry.created).length, 2);
+  assert.equal(entries.length, 5);
+  assert.equal(entries.filter(entry => entry.created).length, 3);
   const repeated = cli([...INIT, '--apply'], env);
   assert.equal(repeated.status, 0, repeated.stderr);
   assert.match(repeated.stdout, at(/^Planned changes: nothing to change$/));
   assert.match(repeated.stdout, at(/^Already configured\. Nothing to write\.$/));
-  assert.equal(JSON.parse(await readFile(journal, 'utf8')).length, 4);
+  assert.equal(JSON.parse(await readFile(journal, 'utf8')).length, 5);
   assert.ok((await readdir(join(env.XDG_CONFIG_HOME, 'opencode'))).some(name => name.includes('.apex-backup-')));
 });
 
@@ -466,6 +591,7 @@ test('a setup whose files can only be skipped does not block older ones', async 
   assert.equal(cli(['init', '--assistants', 'pi', '--apply'], env).status, 0);
   const pi = configPath(env, 'pi');
   await writeFile(pi, '{}\n');
+  await writeFile(join(env.PI_CODING_AGENT_DIR, 'settings.json'), '{}\n');
   const undone = cli(['undo', '--apply'], env);
   assert.equal(undone.status, 0, undone.stderr);
   assert.equal(await exists(configPath(env, 'codex')), false, 'the older setup is undone');
@@ -857,7 +983,7 @@ test('the closing block shows what each run command expands to, and when undo is
   assert.match(applied.stdout, at(/^Use these commands to run callstack\/Apex with your selected harnesses:$/));
   assert.match(applied.stdout, at(/^apex run opencode {2}opencode --model callstack\.ai\/callstack\/Apex$/));
   assert.match(applied.stdout, at(/^apex run codex +codex --profile callstack_ai$/));
-  assert.match(applied.stdout, at(/^apex run pi +pi --provider callstack --model callstack\/Apex$/));
+  assert.match(applied.stdout, at(/^apex run pi +pi --provider callstack --model callstack\/Apex --thinking medium$/));
   assert.match(applied.stdout, at(/^\.\.\.or pick "callstack\/Apex" from the UI when setting up manually\.$/));
   assert.match(applied.stdout, at(/^https:\/\/app\.notion\.com\/p\/callstack\/Apex-how-to-use-it-/));
   assert.match(applied.stdout, at(/^If you want to undo the changes, run apex undo$/));
